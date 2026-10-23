@@ -1,4 +1,28 @@
-# Version 1.1.1 validation
+# Version 1.2.1 validation
+
+All 36 automated tests passed. Added regression coverage for upgrading the former fixed-density settings once, persisting explicit density/media choices across restarts, and retaining 256-byte/50 ms delivery while rejecting unsupported settings.
+
+The Chromium flow passed with the new defaults: detailed-image dithering and sharpening, density 8, lighter-shading preset at brightness 1.10, automatic text-preset conversion, selection and saving of density 15/folded paper, connection without printing, exactly one explicit print and physical-result confirmation. Bluetooth and the vendor driver output were simulated; PDF/image preparation was real. No JavaScript errors or mobile horizontal overflow were observed. Syntax, compilation and whitespace checks passed.
+
+Research-aligned defaults are not a claim of optimal or verified physical F11 output. The terminal script is unchanged; compare actual paper at density 8 and 15 on the Pi. The final PDF/CUPS path still may resample prepared artwork.
+
+# Version 1.2.0 validation
+
+All 35 automated tests passed on the VPS. New tests cover JPEG/PNG upload through PDF export, EXIF orientation, PNG transparency on white paper, rejection of disguised GIF/BMP files, and discovery/pairing/connection without sending a print. Existing script-parity, transfer, cancellation and request validation tests also pass. Physical Raspberry Pi/F11 validation remains outstanding.
+
+A Chromium walkthrough with simulated Bluetooth/driver output passed PNG upload, automatic conversion, automatic preset changes, Connect F11 without printing, one explicit print and user result confirmation. No JavaScript errors occurred; a 390-pixel mobile viewport had no horizontal overflow. The real PDF rendering and image conversion ran during this walkthrough. JavaScript syntax, Python compilation and whitespace checks also passed.
+
+# Version 1.1.2 validation
+
+The user clarified on 23 October 2026 that only the terminal script printed successfully on the Raspberry Pi/F11. The application has not been hardware-validated. Version 1.1.2 reproduces its PDF rendering, density and pacing, and opens/closes a connection per print.
+
+All 32 automated tests passed on the VPS using an isolated Python environment with Pillow, ReportLab and pypdf, with local sockets enabled for HTTP and transport tests. JavaScript syntax checks, Python compilation and diff whitespace checks also passed.
+
+New checks verify pixel-for-pixel equivalence with the script’s real Poppler rendering and monochrome conversion, migration from old settings, preparation before connection, fresh connection and disconnect for each print, fixed 256-byte/50 ms transfer arguments, and no send or retry after connection failure. HTTP tests verify the exported PDF is included in the immutable print snapshot. Existing cancellation, partial-write, duplicate-request and single-page driver checks remain covered.
+
+The current vendor driver invocation was tested with mocks; the vendor binary, browser interaction and physical Pi/F11 printing were not tested in this update. Prior measurements below are historical and were not rerun for this change.
+
+## Historical version 1.1.1 checks
 
 Checked in a Linux x86_64 development environment on 23 October 2026. This is not a physical Raspberry Pi or printer test.
 
@@ -33,7 +57,7 @@ The app's real `prepare_job` pipeline produced these streams, all with the previ
 | Supplied Bench PSU schematic | 156,738 | Landscape source rotates for portrait feed; genuine A4 option |
 | Blank control, deliberately bypassing the app's blank guard | 125,921 | Different data/hash from the marked test pattern |
 
-The real pipeline uses the same prepared PNG as the preview. CUPS rounded the A4 raster to 1677 × 2373 at 203 DPI, versus the app's 1678 × 2374 export. This small driver-stage resampling is documented, rather than claiming device-raster pixel identity. A missing system-bus warning in the isolated CUPS colour-management check did not prevent either conversion stage from completing.
+The previous pipeline used the same prepared PNG as the preview. CUPS rounded the A4 raster to 1677 × 2373 at 203 DPI, versus the app's 1678 × 2374 export. This small driver-stage resampling is documented, rather than claiming device-raster pixel identity. A missing system-bus warning in the isolated CUPS colour-management check did not prevent either conversion stage from completing.
 
 These checks establish that the driver runs on this x86_64 environment and responds to image/paper-feed changes. They do not establish that the ARM64 binary runs on the user's Pi or that the F11 accepts this stream over Bluetooth. Vendor binaries and the user's test documents are not bundled in the deliverable.
 
@@ -55,7 +79,7 @@ The app does not decode undocumented F11 status packets or guess an initialisati
 
 ## User hardware results and single-page regression (23 October 2026)
 
-The user confirmed an RFCOMM connection on channel 1 and visible printing on the Pi 5/F11. Their CUPS log initially showed a 2 by 2 page grid for the 1679 by 2374 PNG with explicit `ppi=203`. Removing that option while retaining fit scaling produced a page the user described as basically perfect. These are user-reported hardware results, separate from the local x86_64 checks above.
+The user confirmed terminal-script printing on the Pi/F11, not application printing. Their CUPS log initially showed a 2 by 2 page grid for the 1679 by 2374 PNG with explicit `ppi=203`. Removing that option while retaining fit scaling produced a page the user described as basically perfect. These are user-reported hardware results, separate from the local x86_64 checks above.
 
 Version 1.1.1 removes the explicit PPI option and rejects missing, tiled, or mixed grid confirmations before returning any printer data. A mocked pipeline regression checks acceptance of a 1 by 1 grid and rejection of the observed 2 by 2 grid and missing diagnostics; it also checks the conversion command excludes explicit PPI. Earlier real-filter measurements above predate this fix.
 

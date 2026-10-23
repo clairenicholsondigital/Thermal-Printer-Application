@@ -3,80 +3,87 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="thermal-token" content="__TOKEN__">
-  <meta name="description" content="Prepare PDFs for a monochrome thermal printer, locally on your Raspberry Pi.">
+  <meta name="description" content="Prepare PDFs and images for a monochrome thermal printer, locally on your Raspberry Pi.">
   <title>Thermal Prep</title>
   <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script><script src="/static/printer.js" defer></script>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="brand-icon" aria-hidden="true">▤</span><div>Thermal Prep<small>From PDF to printable pixels</small></div></div><span class="local"><span></span>Runs on your Pi</span></header>
+<header class="topbar"><div class="brand"><span class="brand-icon" aria-hidden="true">▤</span><div>Thermal Prep<small>PDF or image → paper</small></div></div><span class="local"><span></span>Runs on your Pi</span></header>
 <main>
-  <div class="intro"><div><p class="eyebrow">A little preparation. A better print.</p><h1>Make every detail count.</h1><p>Give your PDF a monochrome preview before it meets the paper.</p></div><div class="profile">Starting profile<strong>A4 · 203 DPI</strong><span>For your Rongta F11 artwork</span></div></div>
+  <div class="intro"><div><p class="eyebrow">A little preparation. A better print.</p><h1>Upload. Prepare. Print.</h1><p>Your PDF, JPG or PNG, prepared automatically for your Rongta F11.</p></div><div class="profile">Your printer profile<strong>A4 · 203 DPI</strong><span>For your Rongta F11 artwork</span></div></div>
   <div class="workspace">
     <aside class="controls" aria-label="Document and conversion settings">
-      <section class="panel upload-panel"><h2><span class="step">1</span>Your document</h2>
-        <label class="dropzone" id="dropzone" for="file"><span class="upload-icon" aria-hidden="true">↑</span><strong>Choose a PDF</strong><span>or drop it here</span><small>Up to 25 MB · processed on this device</small><input id="file" type="file" accept="application/pdf,.pdf"></label>
+      <section class="panel upload-panel"><h2><span class="step">1</span>Upload your file</h2>
+        <label class="dropzone" id="dropzone" for="file"><span class="upload-icon" aria-hidden="true">↑</span><strong>Choose a PDF or image</strong><span>or drop it here</span><small>PDF · JPG · PNG · up to 25 MB</small><input id="file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></label>
         <div id="document" hidden><div class="document-title"><span aria-hidden="true">▤</span><strong id="filename"></strong><button id="clear" class="icon-button" title="Remove document" aria-label="Remove document">×</button></div><div class="page-select"><label for="page">Page to prepare</label><select id="page"></select></div><p class="hint" id="page-note">Downloads contain the selected page.</p></div>
       </section>
-      <section class="panel"><h2><span class="step">2</span>Prepare the page</h2>
-        <fieldset id="settings" disabled><legend class="sr-only">Conversion settings</legend>
-          <label for="preset">Start with a preset</label><select id="preset"><option value="diagram">Detailed diagram</option><option value="text">Text and line drawings</option><option value="photo">Photos and shading</option></select>
-          <p class="hint" id="preset-hint">Preserve component detail with small black dots.</p>
-          <div class="two-columns"><div><label for="paper">Paper</label><select id="paper"><option value="a4">A4</option><option value="letter">US Letter</option></select></div><div><label for="dpi">Resolution</label><select id="dpi"><option value="203">203 DPI</option><option value="300">300 DPI</option></select></div></div>
+      <section class="panel"><h2><span class="step">2</span>Prepared automatically</h2>
+        <p class="hint">Fits to A4, keeps the correct proportions and prepares black-and-white detail at 203 DPI.</p><details><summary>Adjust the result</summary><fieldset id="settings" disabled><legend class="sr-only">Conversion settings</legend>
+          <label for="preset">Start with a preset</label><select id="preset"><option value="diagram">Detailed images &amp; diagrams</option><option value="detail-light">Detailed image · lighter shading</option><option value="text">Text and line drawings</option><option value="photo">Photos and shading</option><option value="wiring">Coloured wiring (no shaded parts)</option></select>
+          <p class="hint" id="preset-hint">Dithering keeps shading and small labels. Start here for detailed images.</p>
+          <div class="two-columns"><div><label for="paper">Paper</label><select id="paper"><option value="a4">A4</option></select></div><div><label for="dpi">Resolution</label><select id="dpi"><option value="203">203 DPI</option></select></div></div>
           <label for="orientation">Page orientation</label><select id="orientation"><option value="auto">Automatic best fit</option><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>
           <label class="check"><input id="crop" type="checkbox" checked><span>Remove white margins</span></label>
           <div class="two-columns"><div><label for="rotation">Rotate artwork</label><select id="rotation"><option value="0">No rotation</option><option value="90">90° clockwise</option><option value="180">180°</option><option value="270">90° anticlockwise</option></select></div><div><label for="margin">Border (mm)</label><input id="margin" type="number" min="3" max="25" step="1" value="8"></div></div>
-          <details><summary>Fine-tune the image</summary>
+          <p class="hint">Start with an 8 mm border. Try 5 mm only after checking the paper feeds straight and nothing clips. Enlarge small labels before adding darkness.</p><details><summary>Fine-tune the image</summary>
             <label for="mode">Black-and-white method</label><select id="mode"><option value="dither">Detail-preserving dots</option><option value="threshold">Solid black and white</option></select>
             <p class="hint">Dots preserve shading. Solid black and white can sharpen text but may hide pale details.</p>
-            <div id="threshold-control" hidden><label for="threshold">Black cut-off <output id="threshold-value">170</output></label><input id="threshold" type="range" min="1" max="254" value="170"><p class="hint">Higher values make more pixels black.</p></div>
+            <div id="threshold-control" hidden><label for="threshold">Black cut-off <output id="threshold-value">170</output></label><input id="threshold" type="range" min="1" max="254" value="170"><p class="hint">Start at 170 for clean line art. Compare 150 or 190 if needed; higher values make more pixels black.</p></div>
             <label for="brightness">Brightness <output id="brightness-value">1.00</output></label><input id="brightness" type="range" min="0.6" max="1.6" step="0.05" value="1">
-            <label for="contrast">Contrast <output id="contrast-value">1.00</output></label><input id="contrast" type="range" min="0.6" max="1.8" step="0.05" value="1">
-            <label class="check"><input id="coloured_lines" type="checkbox"><span>Darken coloured lines</span></label><p class="hint">Useful for pale coloured wires. Check that coloured fills do not become too dark.</p>
+            <p class="hint">If shaded parts look too dark, try brightness 1.10 before increasing printer density.</p><label for="contrast">Contrast <output id="contrast-value">1.00</output></label><input id="contrast" type="range" min="0.6" max="1.8" step="0.05" value="1">
+            <label class="check"><input id="coloured_lines" type="checkbox"><span>Darken coloured lines</span></label><p class="hint">For coloured wires only. Leave off for shaded components: dark fills can hide their labels.</p>
             <label class="check"><input id="sharpen" type="checkbox" checked><span>Gently sharpen edges</span></label>
           </details>
-          <button class="primary" id="convert" type="button">Update preview <span aria-hidden="true">↗</span></button>
-          <p class="hint action-note">Apply your changes when you are ready.</p>
-        </fieldset>
+          <button class="primary" id="convert" type="button">Apply now <span aria-hidden="true">↗</span></button>
+          <p class="hint action-note">Changes apply automatically.</p>
+        </fieldset></details>
       </section>
     </aside>
     <section class="preview-panel" aria-label="Preview and download">
       <div class="preview-heading"><div><h2>Your print, before you print.</h2><p id="preview-subtitle">Original on the left. Prepared pixels on the right.</p></div><div class="zoom-controls" role="group" aria-label="Preview zoom"><button id="fit" class="active" aria-pressed="true" disabled>Fit</button><button id="actual" aria-pressed="false" disabled>1:1 pixels</button><button id="double" aria-pressed="false" disabled>2×</button></div></div>
-      <div id="status" role="status" aria-live="polite">Choose a PDF to get started.</div>
+      <div id="status" role="status" aria-live="polite">Choose a PDF, JPG or PNG to get started.</div>
       <div id="error" role="alert" hidden></div>
       <div id="empty" class="empty"><div class="paper-illustration" aria-hidden="true"><div class="paper-mark">PDF</div><div class="ink-line long"></div><div class="ink-line"></div><div class="dot-grid"></div><div class="ink-line short"></div></div><h3>Less guesswork.<br>More useful printouts.</h3><p>Crop the empty space, keep the important details<br>and inspect the black-and-white result.</p><span class="empty-tag">No printing until you are ready</span></div>
-      <div id="comparison" hidden><div class="preview-grid"><figure><figcaption><span>Original</span><small>Colour source</small></figcaption><div class="image-well original-well"><img id="original" alt="Original selected PDF page"></div></figure><figure><figcaption><span>Prepared</span><small id="prepared-label">Monochrome</small></figcaption><div class="image-well" id="output-well"><img id="prepared" alt="Prepared monochrome page, the same pixels used in the downloads"></div></figure></div>
+      <div id="comparison" hidden><div class="preview-grid"><figure><figcaption><span>Original</span><small>Colour source</small></figcaption><div class="image-well original-well"><img id="original" alt="Original selected page or image"></div></figure><figure><figcaption><span>Prepared</span><small id="prepared-label">Monochrome</small></figcaption><div class="image-well" id="output-well"><img id="prepared" alt="Prepared monochrome page, the same pixels used in the downloads"></div></figure></div>
         <div class="metrics"><div><span>Output size</span><strong id="dimensions">-</strong></div><div><span>Paper</span><strong id="paper-info">-</strong></div><div><span>Black coverage</span><strong id="coverage">-</strong></div></div>
         <div id="warnings" class="warnings" hidden></div>
       </div>
-      <div class="download-bar"><div><h3>Ready to keep?</h3><p id="download-note">Downloads become available after conversion.</p></div><div class="download-actions"><a id="download-png" class="secondary disabled" aria-disabled="true">Download PNG</a><a id="download-pdf" class="primary disabled" aria-disabled="true">Download PDF <span aria-hidden="true">↓</span></a></div></div>
-      <p class="print-note"><strong>Artwork preview.</strong> It shows the exported pixels. Paper, printer settings and the connection still affect the physical result.</p>
+      <details class="export-options"><summary>Save a prepared copy</summary><div class="download-bar"><div><h3>Ready to keep?</h3><p id="download-note">Downloads become available after conversion.</p></div><div class="download-actions"><a id="download-png" class="secondary disabled" aria-disabled="true">Download PNG</a><a id="download-pdf" class="primary disabled" aria-disabled="true">Download PDF <span aria-hidden="true">↓</span></a></div></div>
+      </details><p class="print-note"><strong>Artwork preview.</strong> It shows the exported pixels. Paper, printer settings and the connection still affect the physical result.</p>
     </section>
   </div>
   <section class="panel printer-panel" aria-label="Bluetooth printer">
-    <div class="printer-title"><div><p class="eyebrow">From preview to paper</p><h2><span class="step">3</span>Your Bluetooth printer</h2></div><span class="connection-badge" id="connection-badge">Not connected</span></div>
-    <div class="printer-columns"><div>
-      <div class="printer-toolbar"><button type="button" id="scan-printers" class="secondary">Scan for printers</button><button type="button" id="refresh-printer" class="quiet">Refresh status</button></div>
-      <label for="printer-device">Nearby or remembered devices</label><select id="printer-device"><option value="">Scan to find your printer</option></select>
-      <div class="printer-address-row"><div><label for="printer-address">Printer Bluetooth address</label><input id="printer-address" type="text" value="E2:BF:FB:66:30:50" spellcheck="false" autocomplete="off" maxlength="17"></div><div><label for="printer-channel">Channel</label><input id="printer-channel" type="number" min="1" max="30" value="1"></div></div>
-      <p class="hint" id="paired-status">The address used in your earlier F11 tests is prefilled.</p>
-      <div class="printer-toolbar"><button type="button" id="pair-printer" class="secondary">Pair &amp; remember</button><button type="button" id="connect-printer" class="primary">Connect</button><button type="button" id="disconnect-printer" class="quiet" disabled>Disconnect</button></div>
-      <p class="hint">Turn the F11 on. Close its phone app and any old <code>rfcomm</code> connection before connecting here.</p>
-    </div><div>
+    <div class="printer-title"><div><p class="eyebrow">From preview to paper</p><h2><span class="step">3</span>Connect &amp; print</h2></div><span class="connection-badge" id="connection-badge">Not connected</span></div>
+    <p>Turn on your F11 and load A4 thermal paper. Use the same paper for comparisons and close any other printer app.</p>
+    <div class="printer-print-actions"><button type="button" id="connect-printer" class="secondary">Connect F11</button><button type="button" id="print-page" class="primary" disabled>Print</button></div>
+    <p class="hint" id="print-requirements">Upload a file to prepare your first print.</p>
+    <p class="hint" id="quality-summary">Moderate density · loose A4 sheet</p>
+    <p class="hint" id="paired-status">Your F11 is remembered. Connect once to check it is ready.</p>
+    <details><summary>Print quality, paper &amp; setup</summary>
       <div class="printer-driver" id="driver-status">Checking the F11 driver…</div>
-      <div class="two-columns"><div><label for="printer-media">Paper feed</label><select id="printer-media"><option value="101">Single sheet</option><option value="103">Folded paper</option></select></div><div><label for="printer-density">Print density</label><select id="printer-density"><option value="1">Light</option><option value="8" selected>Moderate</option><option value="15">Dark</option></select></div></div>
-      <details><summary>Driver and transfer settings</summary><label for="printer-mode">F11 image processing</label><select id="printer-mode"><option value="5">Driver default</option><option value="9">Mixed image and text</option><option value="10">Text only</option></select><div class="two-columns"><div><label for="printer-chunk">Bytes per write</label><select id="printer-chunk"><option>128</option><option selected>256</option><option>512</option><option>1024</option></select></div><div><label for="printer-pause">Pause between writes</label><select id="printer-pause"><option value="0">No pause</option><option value="10">10 ms</option><option value="25" selected>25 ms</option><option value="50">50 ms</option><option value="100">100 ms</option></select></div></div><p class="hint">A direct RFCOMM socket preserves binary bytes. Pacing may help buffering, but is not a confirmed fix for blank pages.</p></details>
-      <div class="printer-toolbar"><button type="button" id="save-printer" class="quiet">Save settings</button><a href="/api/printer/test-page.png" target="_blank" rel="noopener" class="quiet">View test pattern</a></div>
-      <div class="printer-print-actions"><button type="button" id="print-test" class="secondary" disabled>Print test page</button><button type="button" id="print-page" class="primary" disabled>Print this page</button></div>
-      <p class="hint" id="print-requirements">Connect the printer before sending a test page.</p>
-      <p class="experimental"><strong>Experimental F11 Bluetooth printing.</strong> Visible printing has been reported on a Pi 5; connection reliability remains experimental. Start with the test pattern, which uses one A4 sheet. A completed transfer is not confirmation of visible output.</p>
-    </div></div>
+      <p class="hint">The recommended quality settings are applied automatically. Bluetooth uses the working script’s transfer settings. Each print opens a fresh connection and disconnects when the transfer ends.</p>
+      <div class="printer-toolbar"><button type="button" id="scan-printers" class="secondary">Find a different F11</button><button type="button" id="refresh-printer" class="quiet">Refresh status</button></div>
+      <label for="printer-device">Nearby or remembered devices</label><select id="printer-device"><option value="">Scan to find your F11</option></select>
+      <label for="printer-address">F11 Bluetooth address</label><input id="printer-address" type="text" value="E2:BF:FB:66:30:50" spellcheck="false" autocomplete="off" maxlength="17">
+      <label for="printer-density">Print density</label><select id="printer-density"><option value="1">Light · 1</option><option value="8" selected>Moderate · 8 · recommended starting point</option><option value="15">Dark · 15 · working-script comparison</option></select>
+      <p class="hint">Start at 8 for small labels and gaps. Try 15 only if too faint, or 1 if ink fills fine gaps. Density changes the printed darkness, not the preview.</p>
+      <label for="printer-media">Paper loaded</label><select id="printer-media"><option value="101">Loose A4 sheet</option><option value="103">Folded / black-marked A4 paper</option></select>
+      <div hidden>
+        <input id="printer-channel" type="number" value="1">
+        <select id="printer-mode"><option value="5">Default</option></select>
+        <select id="printer-chunk"><option value="256">256</option></select>
+        <select id="printer-pause"><option value="50">50 ms</option></select>
+      </div>
+      <div class="printer-toolbar"><button type="button" id="pair-printer" class="secondary">Pair &amp; remember</button><button type="button" id="disconnect-printer" class="quiet" disabled>Disconnect</button><button type="button" id="save-printer" class="quiet">Save printer</button></div>
+      <div class="printer-toolbar"><button type="button" id="print-test" class="secondary" disabled>Print test page</button><a href="/api/printer/test-page.png" target="_blank" rel="noopener" class="quiet">View test pattern</a></div>
+    </details>
     <div id="printer-message" role="status" aria-live="polite">No printer operation is running.</div><div id="printer-error" role="alert" hidden></div>
     <div id="pairing-question" hidden><strong id="pairing-message"></strong><div class="printer-toolbar"><input id="pairing-value" type="password" autocomplete="off" aria-label="Printer pairing PIN or passkey"><button id="pairing-submit" class="primary">Submit PIN</button><button id="pairing-reject" class="secondary">Cancel pairing</button></div></div>
     <div class="transfer-row" id="transfer-row" hidden><progress id="transfer-progress" max="100" value="0" aria-label="Bluetooth data transfer progress"></progress><button id="cancel-printer" class="secondary">Cancel operation</button></div>
-    <div id="print-outcome" hidden><strong>What came out?</strong><div class="printer-toolbar"><button data-outcome="visible" class="secondary">Visible print</button><button data-outcome="blank" class="secondary">Blank sheet</button><button data-outcome="no-response" class="secondary">No response</button><button data-outcome="distorted" class="secondary">Distorted print</button></div><p id="outcome-message" class="hint"></p></div>
+    <div id="print-outcome" hidden><strong>Check your page</strong><div class="printer-toolbar"><button data-outcome="visible" class="secondary">Printed correctly</button><button data-outcome="blank" class="secondary">Blank sheet</button><button data-outcome="no-response" class="secondary">No response</button><button data-outcome="distorted" class="secondary">Distorted print</button></div><p id="outcome-message" class="hint"></p></div>
     <div class="printer-footer"><a id="printer-diagnostics" class="quiet" href="/api/printer/diagnostics" download="thermal-prep-diagnostics.json">Download diagnostics</a><span>Driver settings, transfer progress and raw replies. Your source PDF is not included.</span></div>
   </section>
-  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v1.1.1</span></footer>
+  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v1.2.1</span></footer>
 </main>
 </body>
 </html>

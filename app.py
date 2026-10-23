@@ -13,7 +13,8 @@ import time
 from urllib.parse import unquote, urlsplit
 import uuid
 
-from converter import ConversionError, Settings, export_result, inspect_pdf, render_page
+from converter import ConversionError, Settings, export_result, inspect_upload, render_page
+from PIL import Image
 from bluetooth_link import PrinterError
 from printer_driver import test_page
 from printer_service import PrinterService
@@ -100,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
             html = (ROOT / "static/index.html").read_text().replace("__TOKEN__", self.server.token)
             return self.send_bytes(html.encode(), "text/html; charset=utf-8", cookie=True)
         if path == "/health":
-            return self.json_response({"app": "thermal-prep", "version": "1.1.1"})
+            return self.json_response({"app": "thermal-prep", "version": "1.2.1"})
         if path in ("/static/app.js", "/static/printer.js", "/static/style.css"):
             file = ROOT / path.lstrip("/")
             return self.send_bytes(file.read_bytes(), mimetypes.guess_type(str(file))[0])
@@ -134,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             raise ConversionError("Invalid upload size.") from exc
         if not 0 < size <= limit:
-            raise ConversionError("Choose a PDF under 25 MB." if limit == MAX_UPLOAD else "Invalid request size.")
+            raise ConversionError("Choose a PDF, JPG or PNG under 25 MB." if limit == MAX_UPLOAD else "Invalid request size.")
         body = self.rfile.read(size)
         if len(body) != size:
             raise ConversionError("The upload was interrupted. Please try again.")
@@ -163,15 +164,15 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     source = directory / "source.pdf"
                     source.write_bytes(body)
-                    pages = inspect_pdf(source)
+                    pages, source_kind = inspect_upload(source, directory)
                 except Exception:
                     shutil.rmtree(directory)
                     raise
                 self.remove_job()
                 name = Path(unquote(self.headers.get("X-Filename", "document.pdf"))).name[:150]
                 self.server.job = {"id": identifier, "dir": directory, "pages": pages,
-                                   "name": name, "results": []}
-                return self.json_response({"id": identifier, "pages": pages, "name": name})
+                                   "name": name, "kind": source_kind, "results": []}
+                return self.json_response({"id": identifier, "pages": pages, "name": name, "kind": source_kind})
             body = json.loads(self.read_body(8192))
             if not isinstance(body, dict):
                 raise ConversionError("Invalid conversion request.")
@@ -179,7 +180,11 @@ class Handler(BaseHTTPRequestHandler):
             if not job or body.get("id") != job["id"]:
                 return self.error("Upload your PDF again to continue.", 404)
             settings = Settings.parse(body.get("settings", {}), job["pages"])
-            original = render_page(job["dir"] / "source.pdf", settings.page, job["dir"])
+            if job["kind"] == "image":
+                with Image.open(job["dir"] / "source.png") as image:
+                    original = image.convert("RGB")
+            else:
+                original = render_page(job["dir"] / "source.pdf", settings.page, job["dir"])
             result_id = uuid.uuid4().hex
             directory = job["dir"] / result_id
             try:
@@ -233,7 +238,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not job or data.get("document_id") != job["id"] or not job["results"] or data.get("result_id") != job["results"][-1]:
                         raise PrinterError("This preview is no longer current. Update the preview before printing.")
                     folder = job["dir"] / job["results"][-1]
-                    snapshot = ((folder / "thermal.png").read_bytes(),json.loads((folder / "settings.json").read_text()))
+                    snapshot = ((folder / "thermal.png").read_bytes(),json.loads((folder / "settings.json").read_text()),
+                                (folder / "thermal.pdf").read_bytes())
                 finally:
                     self.server.lock.release()
             return self.json_response(service.start(data.get("action"),data.get("request_id"),snapshot),202)

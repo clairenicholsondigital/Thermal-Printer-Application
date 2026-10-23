@@ -11,7 +11,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from bluetooth_link import Cancelled, PairingPrompt, PrinterError, RFCOMMLink, address, channel_number
-from printer_driver import prepare_job, run_stage, test_page
+from printer_driver import prepare_job, render_prepared_pdf, run_stage, test_page
 from printer_service import DEFAULTS, PrinterService, validate_config
 import test_app
 
@@ -86,13 +86,15 @@ class TransportTests(unittest.TestCase):
 
 
 class FakeLink:
-    def __init__(self):self.connected=True;self.sent=[];self.entered=threading.Event();self.release=threading.Event()
+    def __init__(self):self.connected=True;self.sent=[];self.entered=threading.Event();self.release=threading.Event();self.connections=[];self.send_settings=[]
     def state(self):return {'connected':self.connected,'address':DEFAULTS['address'],'channel':1}
+    def connect(self,mac,channel):self.connected=True;self.connections.append((mac,channel))
     def send(self,data,cancel,progress,*args):
+        self.send_settings.append(args)
         self.entered.set();self.release.wait(2)
         if cancel.is_set():raise Cancelled('Cancelled')
         self.sent.append(data);progress(len(data),len(data));return {'sent':len(data)}
-    def disconnect(self):self.connected=False;self.release.set()
+    def disconnect(self):self.connected=False
     def diagnostics(self):return self.state()
 
 
@@ -100,54 +102,141 @@ class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.link=FakeLink()
         self.service=PrinterService(self.root/'jobs',config_path=self.root/'config.json',link=self.link)
+        self.snapshot=(b'preview',{'dpi':203,'settings':{'paper':'a4'}},b'pdf')
+        render=patch('printer_service.render_prepared_pdf',return_value=self.snapshot[:2])
+        self.render=render.start();self.addCleanup(render.stop)
     def tearDown(self):self.service.close();self.tmp.cleanup()
     def wait(self):
         self.service.worker.join(4);self.assertFalse(self.service.worker.is_alive())
 
+    def test_old_settings_upgrade_to_working_profile(self):
+        self.service.config_path.write_text(json.dumps(DEFAULTS | {'density':15,'pause_ms':25,'media':103}))
+        upgraded=PrinterService(self.root/'upgrade',config_path=self.service.config_path)
+        try:
+            self.assertEqual(upgraded.config,DEFAULTS)
+        finally:
+            upgraded.close()
+
+    def test_quality_choices_survive_restart_without_changing_transport(self):
+        self.service.save(DEFAULTS | {'density':15,'media':103})
+        reopened=PrinterService(self.root/'reopened',config_path=self.service.config_path)
+        try:
+            self.assertEqual(reopened.config['density'],15)
+            self.assertEqual(reopened.config['media'],103)
+            self.assertEqual(reopened.config['pause_ms'],50)
+            self.assertEqual(reopened.config['chunk_size'],256)
+        finally:
+            reopened.close()
+        for density in (1,8,15):
+            self.assertEqual(validate_config({'density':density})['density'],density)
+        for invalid in ({'density':9},{'density':True},{'pause_ms':25},{'print_mode':9}):
+            with self.assertRaises(PrinterError):validate_config(invalid)
+
+    def test_connection_failure_closes_without_sending_or_retry(self):
+        with patch('printer_service.prepare_job',return_value=(b'raw',{})), patch.object(self.link,'connect',side_effect=PrinterError('offline')) as connect:
+            self.service.start('print','a'*32,self.snapshot);self.wait()
+        connect.assert_called_once()
+        self.assertFalse(self.link.connected)
+        self.assertEqual(self.link.sent,[])
+        self.assertEqual(self.service.state()['task']['status'],'failed')
+
+    def test_preparation_finishes_before_fresh_connection(self):
+        self.link.connected=False
+        def prepare(*args):
+            self.assertFalse(self.link.connected)
+            self.assertEqual(self.link.connections,[])
+            self.assertEqual(args[2]['density'],8)
+            return b'raw',{}
+        with patch('printer_service.prepare_job',side_effect=prepare):
+            self.link.release.set()
+            self.service.start('print','a'*32,self.snapshot);self.wait()
+        self.assertEqual(self.link.sent,[b'raw'])
+        self.assertFalse(self.link.connected)
+
+    def test_setup_scans_pairs_then_connects_without_printing(self):
+        from unittest.mock import Mock
+        bt=Mock()
+        bt.devices.return_value={'devices':[],'adapters':[]}
+        found={'devices':[{'address':DEFAULTS['address'],'paired':True}],'adapters':[]}
+        bt.scan.return_value=found;bt.pair.return_value=found
+        with patch.object(self.service,'bluetooth',return_value=bt):
+            self.service.start('setup','a'*32);self.wait()
+        bt.scan.assert_called_once();bt.pair.assert_called_once()
+        self.assertEqual(self.link.connections,[(DEFAULTS['address'],1)])
+        self.assertEqual(self.link.sent,[])
+        self.assertEqual(self.service.state()['task']['status'],'done')
+
     def test_duplicate_request_sends_once_and_outcome_is_explicit(self):
         with patch('printer_service.prepare_job',return_value=(b'raw-packet',{'test':True})):
-            result=self.service.start('print','a'*32,(b'preview',{}));self.assertTrue(self.link.entered.wait(2))
-            duplicate=self.service.start('print','a'*32,(b'preview',{}))
+            result=self.service.start('print','a'*32,self.snapshot);self.assertTrue(self.link.entered.wait(2))
+            duplicate=self.service.start('print','a'*32,self.snapshot)
             self.assertTrue(duplicate['duplicate']);self.assertEqual(result['task_id'],duplicate['task_id'])
-            with self.assertRaises(PrinterError):self.service.start('print','b'*32,(b'preview',{}))
+            with self.assertRaises(PrinterError):self.service.start('print','b'*32,self.snapshot)
             with self.assertRaises(PrinterError):self.service.save(DEFAULTS)
             self.link.release.set();self.wait()
         self.assertEqual(self.link.sent,[b'raw-packet']);state=self.service.state()
+        self.assertEqual(self.link.send_settings,[(256,50)])
+        self.assertEqual(self.link.connections,[(DEFAULTS['address'],1)])
+        self.assertFalse(self.link.connected)
+        self.render.assert_called_once()
         self.assertEqual(state['task']['status'],'sent');self.assertEqual(state['last_print']['outcome'],'unconfirmed')
         self.service.outcome(result['task_id'],'blank')
         self.assertEqual(self.service.diagnostics()['observed_result']['outcome'],'blank')
-        self.assertTrue(self.service.start('print','a'*32,(b'preview',{}))['duplicate'])
+        self.assertTrue(self.service.start('print','a'*32,self.snapshot)['duplicate'])
         self.assertEqual(len(self.link.sent),1)
 
     def test_driver_failure_sends_nothing(self):
         with patch('printer_service.prepare_job',side_effect=PrinterError('bad driver')):
-            self.service.start('print','a'*32,(b'preview',{}));self.wait()
+            self.service.start('print','a'*32,self.snapshot);self.wait()
         self.assertEqual(self.service.state()['task']['status'],'failed')
         self.assertEqual(self.link.sent,[]);self.assertIsNone(self.service.state()['last_print'])
 
-    def test_cancellation_and_disconnected_print_guard(self):
+    def test_cancellation_and_fresh_connection_on_next_print(self):
         with patch('printer_service.prepare_job',return_value=(b'raw',{})):
-            self.service.start('print','a'*32,(b'preview',{}));self.assertTrue(self.link.entered.wait(2))
+            self.service.start('print','a'*32,self.snapshot);self.assertTrue(self.link.entered.wait(2))
             self.service.cancel();self.wait()
         self.assertEqual(self.service.state()['task']['status'],'cancelled');self.assertEqual(self.link.sent,[])
-        with self.assertRaises(PrinterError):self.service.start('test','b'*32)
+        self.assertFalse(self.link.connected)
+        with patch('printer_service.prepare_job',return_value=(b'next',{})):
+            self.link.release.set()
+            self.service.start('test','b'*32);self.wait()
+        self.assertEqual(self.link.sent,[b'next'])
+        self.assertEqual(len(self.link.connections),2)
+        self.assertFalse(self.link.connected)
 
     def test_config_persistence_validation_and_address_change_disconnect(self):
-        self.service.save(DEFAULTS|{'address':'AA:BB:CC:DD:EE:FF','media':103})
+        self.service.save(DEFAULTS|{'address':'AA:BB:CC:DD:EE:FF'})
         self.assertFalse(self.link.connected)
-        self.assertEqual(json.loads(self.service.config_path.read_text())['media'],103)
+        self.assertEqual(json.loads(self.service.config_path.read_text())['media'],101)
         self.assertEqual(self.service.config_path.stat().st_mode & 0o777,0o600)
         for data in ({'channel':True},{'pause_ms':-1},{'media':999},{'unknown':1}):
             with self.assertRaises(PrinterError):validate_config(data)
 
 
 class DriverTests(unittest.TestCase):
+    def test_pdf_render_matches_working_script(self):
+        from reportlab.pdfgen import canvas
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            pdf=canvas.Canvas(str(root/'source.pdf'),pagesize=(595.276,841.89))
+            pdf.drawString(100,700,'First page');pdf.showPage()
+            pdf.drawString(100,700,'Second page');pdf.showPage();pdf.save()
+            data,metadata=render_prepared_pdf((root/'source.pdf').read_bytes(),root,threading.Event(),lambda s:None)
+            subprocess.run(['pdftoppm','-f','1','-l','1','-singlefile','-r','203','-png',str(root/'source.pdf'),str(root/'reference')],check=True,capture_output=True)
+            with Image.open(root/'reference.png') as reference, Image.open(io.BytesIO(data)) as actual:
+                self.assertEqual(actual.mode,'1')
+                self.assertEqual(actual.size,reference.size)
+                self.assertEqual(actual.tobytes(),reference.convert('1').tobytes())
+            self.assertEqual(metadata['dpi'],203)
+            self.assertEqual(metadata['settings']['paper'],'a4')
+
     def test_single_page_conversion_rejects_tiling_and_missing_confirmation(self):
         png = io.BytesIO()
         Image.new('1', (20, 30), 0).save(png, format='PNG')
         driver = {'ready': True, 'ppd': 'F11.ppd', 'cupsfilter': 'cupsfilter',
                   'filter': 'vendor-filter', 'information': {'options': {
-                      'MediaTracking': ['101'], 'Darkness': ['8'],
+                      'MediaTracking': ['101'], 'Darkness': ['8','15'],
                       'PrintMode': ['5'], 'Resolution': ['203dpi']}}}
         metadata = {'dpi': 203, 'black_pixels': 600,
                     'settings': {'paper': 'a4'}, 'orientation': 'portrait'}
@@ -223,6 +312,7 @@ class PrinterHTTPTests(unittest.TestCase):
             snapshot=start.call_args.args[2]
             self.request('POST','/api/reset',b'',self.headers)
             self.assertTrue(snapshot[0].startswith(b'\x89PNG'));self.assertEqual(snapshot[1]['dpi'],203)
+            self.assertTrue(snapshot[2].startswith(b'%PDF-'))
 
 
 if __name__=='__main__':unittest.main()

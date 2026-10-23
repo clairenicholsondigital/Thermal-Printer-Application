@@ -358,7 +358,7 @@ class RFCOMMLink:
             return {"connected": self.sock is not None, "address": self.mac, "channel": self.channel,
                     "received_bytes": self.received_count, "last_error": self.last_error}
 
-    def send(self, data, cancel, progress, chunk_size=256, pause_ms=25):
+    def send(self, data, cancel, progress, chunk_size=256, pause_ms=50):
         with self.lock:
             sock = self.sock
         if sock is None:

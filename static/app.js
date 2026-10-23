@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="thermal-token"]').content;
-let job = null, result = null, busy = false, dirty = false, zoom = 0;
+let job = null, result = null, busy = false, dirty = false, zoom = 0, preparationTimer = null;
 const fields = ['paper','dpi','orientation','rotation','crop','margin','mode','threshold','brightness','contrast','coloured_lines','sharpen'];
 function message(text, spinning=false) { $('status').textContent=text; $('status').classList.toggle('busy',spinning); }
 function fail(error) { $('error').textContent=error.message || String(error); $('error').hidden=false; }
@@ -16,7 +16,7 @@ function settings() {
   return {page:Number($('page').value),paper:$('paper').value,dpi:Number($('dpi').value),orientation:$('orientation').value,rotation:Number($('rotation').value),crop:$('crop').checked,margin:Number($('margin').value),mode:$('mode').value,threshold:Number($('threshold').value),brightness:Number($('brightness').value),contrast:Number($('contrast').value),coloured_lines:$('coloured_lines').checked,sharpen:$('sharpen').checked};
 }
 function updateLabels() { for(const name of ['brightness','contrast'])$(name+'-value').value=Number($(name).value).toFixed(2); $('threshold-value').value=$('threshold').value; $('threshold-control').hidden=$('mode').value!=='threshold'; }
-function markDirty() { updateLabels(); if(!job || busy)return; dirty=true; downloads(false); message('Settings changed. Update the preview to apply them.'); $('download-note').textContent='Update the preview before downloading your changes.'; }
+function markDirty() { updateLabels(); if(!job || busy)return; dirty=true; downloads(false); message('Applying your adjustments…'); $('download-note').textContent='Preparing your changes…'; clearTimeout(preparationTimer); preparationTimer=setTimeout(convert,500); }
 async function api(path, body, extra={}) {
   const response=await fetch(path,{method:'POST',headers:{'X-Thermal-Token':token,...extra},body});
   let data; try {data=await response.json();} catch {throw new Error('The app did not respond. Check that Thermal Prep is still running.');}
@@ -25,22 +25,25 @@ async function api(path, body, extra={}) {
 async function upload(file) {
   if(!file || busy)return;
   clearError();
-  if(!file.name.toLowerCase().endsWith('.pdf'))return fail(new Error('Choose a PDF file.'));
-  if(file.size>25*1024*1024 || !file.size)return fail(new Error('Choose a non-empty PDF under 25 MB.'));
-  setBusy(true); downloads(false); message('Opening your PDF…',true);
+  if(!/\.(pdf|jpe?g|png)$/i.test(file.name))return fail(new Error('Choose a PDF, JPG or PNG.'));
+  if(file.size>25*1024*1024 || !file.size)return fail(new Error('Choose a PDF, JPG or PNG under 25 MB.'));
+  setBusy(true); downloads(false); message('Opening your file…',true);
   try {
-    job=await api('/api/upload',file,{'Content-Type':'application/pdf','X-Filename':encodeURIComponent(file.name)});
+    job=await api('/api/upload',file,{'Content-Type':file.type || 'application/octet-stream','X-Filename':encodeURIComponent(file.name)});
     result=null; $('comparison').hidden=true; $('empty').hidden=false;
     $('filename').textContent=job.name; $('document').hidden=false; $('dropzone').hidden=true;
     $('page').replaceChildren();
     for(let i=1;i<=job.pages;i++){const option=document.createElement('option');option.value=i;option.textContent=`${i} of ${job.pages}`;$('page').append(option);}
-    $('page-note').textContent=job.pages===1?'One-page PDF.':'Choose a page. Downloads contain that page only.';
+    $('page').parentElement.hidden=job.pages===1;
+    $('page-note').textContent=job.kind==='image'?'Image fitted to one A4 sheet.':job.pages===1?'One page · one A4 sheet.':'Choose a page to print. Each print uses one sheet.';
+    applyPreset('diagram');
     setBusy(false); await convert();
-  } catch(error) { fail(error); message('Could not open this PDF.'); setBusy(false); downloads(!!result && !dirty); }
+  } catch(error) { fail(error); message('Could not open this file.'); setBusy(false); downloads(!!result && !dirty); }
   finally {$('file').value='';}
 }
 function imageLoaded(element, url) {return new Promise((resolve,reject)=>{element.onload=resolve;element.onerror=()=>reject(new Error('The preview could not be loaded. Update it to try again.'));element.src=url;});}
 async function convert() {
+  clearTimeout(preparationTimer);
   if(!job || busy)return;
   if(!$('margin').checkValidity()){$('margin').reportValidity();return;}
   clearError(); setBusy(true); downloads(false); message('Rendering your page and preparing its pixels…',true);
@@ -57,7 +60,7 @@ async function convert() {
     $('warnings').hidden=!data.warnings.length;
     $('download-note').textContent=`Selected page ${data.settings.page}. Both downloads use the pixels shown above.`;
     for(const id of ['fit','actual','double'])$(id).disabled=false;
-    applyZoom(zoom); downloads(true); message(data.black_pixels?'Preview ready. Zoom in to inspect small details.':'Preview ready, but the output contains no black pixels.');
+    applyZoom(zoom); downloads(true); message(data.black_pixels?'Ready. Check the preview, connect your F11 and press Print.':'Preview ready, but the output contains no black pixels.');
   } catch(error){dirty=true;fail(error);message('Preview could not be updated.');$('download-note').textContent='Update the preview successfully before downloading.';}
   finally{setBusy(false);}
 }
@@ -68,17 +71,19 @@ function applyZoom(value) {
   for(const [id,v] of [['fit',0],['actual',1],['double',2]]){$(id).classList.toggle('active',value===v);$(id).setAttribute('aria-pressed',String(value===v));}
 }
 async function reset() {
+  clearTimeout(preparationTimer);
   if(busy)return; clearError(); setBusy(true);
-  try {await api('/api/reset','');job=null;result=null;dirty=false;downloads(false);$('document').hidden=true;$('dropzone').hidden=false;$('comparison').hidden=true;$('empty').hidden=false;$('original').removeAttribute('src');$('prepared').removeAttribute('src');for(const id of ['fit','actual','double'])$(id).disabled=true;message('Choose a PDF to get started.');$('download-note').textContent='Downloads become available after conversion.';}catch(error){fail(error);}finally{setBusy(false);}
+  try {await api('/api/reset','');job=null;result=null;dirty=false;downloads(false);$('document').hidden=true;$('dropzone').hidden=false;$('comparison').hidden=true;$('empty').hidden=false;$('original').removeAttribute('src');$('prepared').removeAttribute('src');for(const id of ['fit','actual','double'])$(id).disabled=true;message('Choose a PDF, JPG or PNG to get started.');$('download-note').textContent='Downloads become available after conversion.';}catch(error){fail(error);}finally{setBusy(false);}
 }
 $('file').addEventListener('change',event=>upload(event.target.files[0]));
 $('clear').addEventListener('click',reset);$('convert').addEventListener('click',convert);
 $('page').addEventListener('change',()=>{markDirty();convert();});
 for(const id of fields)$(id).addEventListener('input',markDirty);
-$('preset').addEventListener('change',()=>{
- const type=$('preset').value;$('mode').value=type==='text'?'threshold':'dither';$('threshold').value=170;$('brightness').value=1;$('contrast').value=1;$('coloured_lines').checked=false;$('sharpen').checked=type!=='photo';
- $('preset-hint').textContent={diagram:'Preserve component detail with small black dots.',text:'Crisp lettering and lines. Inspect pale content carefully.',photo:'Keep tonal shading with a pattern of small dots.'}[type];markDirty();
-});
+function applyPreset(type) {
+ $('preset').value=type;$('mode').value=['text','wiring'].includes(type)?'threshold':'dither';$('threshold').value=170;$('brightness').value=type==='detail-light'?1.1:1;$('contrast').value=1;$('coloured_lines').checked=type==='wiring';$('sharpen').checked=true;
+ $('preset-hint').textContent={diagram:'Preserve component detail with small black dots.','detail-light':'Brightness 1.10 lifts dark shading. Compare the smallest labels with the standard detailed-image preset.',text:'Crisp lettering and lines. Inspect pale content carefully.',photo:'Preserve shading with dots. Turn sharpening off if edges look rough.',wiring:'Preserve bright wires with solid lines. Avoid this for shaded components.'}[type];updateLabels();
+}
+$('preset').addEventListener('change',()=>{applyPreset($('preset').value);markDirty();});
 for(const [id,v] of [['fit',0],['actual',1],['double',2]])$(id).addEventListener('click',()=>applyZoom(v));
 for(const event of ['dragenter','dragover'])$('dropzone').addEventListener(event,e=>{e.preventDefault();if(!busy)$('dropzone').classList.add('dragging');});
 for(const event of ['dragleave','drop'])$('dropzone').addEventListener(event,e=>{e.preventDefault();$('dropzone').classList.remove('dragging');});

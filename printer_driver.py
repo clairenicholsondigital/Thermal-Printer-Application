@@ -159,3 +159,24 @@ def prepare_job(png_bytes, metadata, config, directory, cancel, update):
                    "job_sha256":hashlib.sha256(data).hexdigest(),"header_hex":data[:64].hex(),
                    "landscape_rotated_for_feed":metadata.get("orientation")=="landscape"}
     return data, diagnostics
+
+
+def render_prepared_pdf(pdf_bytes, directory, cancel, update):
+    """Mirror scripts/test-print.sh: exported page -> 203 DPI PNG -> 1-bit."""
+    directory = Path(directory)
+    source = directory / "prepared.pdf"
+    source.write_bytes(pdf_bytes)
+    update("Rendering the prepared PDF at 203 DPI for the Rongta F11…")
+    run_stage(["pdftoppm", "-f", "1", "-l", "1", "-singlefile",
+               "-r", "203", "-png", str(source), str(directory / "page")],
+              directory / "pdf-render.stdout", directory / "pdf-render.log",
+              cancel, timeout=60)
+    with Image.open(directory / "page.png") as image:
+        mono = image.convert("1")
+    output = directory / "prepared.png"
+    mono.save(output, dpi=(203, 203))
+    return output.read_bytes(), {
+        "dpi": 203, "settings": {"paper": "a4"},
+        "orientation": "landscape" if mono.width > mono.height else "portrait",
+        "black_pixels": mono.histogram()[0],
+    }

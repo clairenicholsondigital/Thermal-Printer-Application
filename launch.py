@@ -28,7 +28,7 @@ def main():
     with (state / "launcher.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         version = ready()
-        if version and version != "1.1.1":
+        if version and version != "1.2.1":
             message = "An older Thermal Prep is still running. Restart the Pi once to load the Bluetooth update."
             print(message,file=sys.stderr)
             try:

@@ -105,6 +105,41 @@ class ConverterTests(unittest.TestCase):
 
 
 class HTTPTests(unittest.TestCase):
+    def test_image_upload_prepares_exported_pdf(self):
+        for fmt in ('JPEG','PNG'):
+            with self.subTest(fmt=fmt):
+                image=Image.new('RGB',(240,120),'white')
+                image.paste('black',(40,30,180,90))
+                data=io.BytesIO();image.save(data,format=fmt)
+                status,_,body=self.request('POST','/api/upload',data.getvalue(),self.headers)
+                self.assertEqual(status,200,body);job=json.loads(body)
+                self.assertEqual((job['kind'],job['pages']),('image',1))
+                status,_,body=self.request('POST','/api/convert',json.dumps({'id':job['id']}),self.headers)
+                self.assertEqual(status,200,body);result=json.loads(body)
+                self.assertGreater(result['black_pixels'],0)
+                status,_,pdf=self.request('GET',result['base']+'thermal.pdf',headers=self.headers)
+                self.assertEqual(status,200)
+                self.assertEqual(len(PdfReader(io.BytesIO(pdf)).pages),1)
+
+    def test_image_orientation_transparency_and_invalid_content(self):
+        image=Image.new('RGBA',(100,50),(0,0,0,0));image.putpixel((20,20),(0,0,0,255))
+        data=io.BytesIO();image.save(data,format='PNG')
+        status,_,_=self.request('POST','/api/upload',data.getvalue(),self.headers)
+        self.assertEqual(status,200)
+        with Image.open(self.server.job['dir']/'source.png') as normal:
+            self.assertEqual(normal.getpixel((0,0)),(255,255,255))
+            self.assertEqual(normal.getpixel((20,20)),(0,0,0))
+        image=Image.new('RGB',(100,50),'black');exif=image.getexif();exif[274]=6
+        data=io.BytesIO();image.save(data,format='JPEG',exif=exif)
+        status,_,_=self.request('POST','/api/upload',data.getvalue(),self.headers)
+        self.assertEqual(status,200)
+        with Image.open(self.server.job['dir']/'source.png') as normal:
+            self.assertEqual(normal.size,(50,100))
+        for fmt in ('GIF','BMP'):
+            data=io.BytesIO();image.save(data,format=fmt)
+            status,_,_=self.request('POST','/api/upload',data.getvalue(),self.headers|{'X-Filename':'fake.png'})
+            self.assertEqual(status,400)
+
     def setUp(self):
         self.server=LocalServer(("127.0.0.1",0))
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()

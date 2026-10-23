@@ -10,10 +10,10 @@ import time
 import uuid
 
 from bluetooth_link import BlueZ, Cancelled, PairingPrompt, PrinterError, RFCOMMLink, address, channel_number
-from printer_driver import find_driver, prepare_job, test_page
+from printer_driver import find_driver, prepare_job, render_prepared_pdf, test_page
 
 DEFAULTS = {"address":"E2:BF:FB:66:30:50","channel":1,"media":101,"density":8,
-            "print_mode":5,"chunk_size":256,"pause_ms":25}
+            "print_mode":5,"chunk_size":256,"pause_ms":50}
 
 
 def validate_config(data):
@@ -22,8 +22,8 @@ def validate_config(data):
     result = DEFAULTS | data
     result["address"] = address(result["address"])
     channel_number(result["channel"])
-    allowed = {"media":(101,103),"density":(1,8,15),"print_mode":(5,9,10),
-               "chunk_size":(128,256,512,1024),"pause_ms":(0,10,25,50,100)}
+    allowed = {key:(DEFAULTS[key],) for key in DEFAULTS if key != "address"}
+    allowed.update(density=(1,8,15),media=(101,103))
     for key, options in allowed.items():
         if type(result[key]) is not int or result[key] not in options:
             raise PrinterError(f"Unsupported {key} setting.")
@@ -37,8 +37,12 @@ class PrinterService:
         self.config_path = Path(config_path) if config_path else Path.home()/".config/thermal-prep/printer.json"
         self.config = dict(DEFAULTS)
         try:
-            self.config = validate_config(json.loads(self.config_path.read_text()))
-        except (OSError,ValueError,TypeError):
+            saved = json.loads(self.config_path.read_text())
+            # Old versions forced density 15; start those users on the detail
+            # baseline once, but retain explicitly saved quality choices later.
+            version = saved.pop("settings_version", 0)
+            self.config = validate_config(saved if version == 2 else {"address": saved["address"]})
+        except (OSError,ValueError,TypeError,KeyError):
             pass
         self.lock = threading.RLock()
         self.task = None
@@ -80,7 +84,7 @@ class PrinterService:
             old = self.config
             self.config_path.parent.mkdir(parents=True,exist_ok=True)
             temp = self.config_path.with_suffix(".tmp")
-            temp.write_text(json.dumps(config,indent=2)+"\n")
+            temp.write_text(json.dumps(config | {"settings_version":2},indent=2)+"\n")
             temp.chmod(0o600)
             temp.replace(self.config_path)
             self.config = config
@@ -90,7 +94,7 @@ class PrinterService:
             return self.state()
 
     def start(self, kind, request_id, snapshot=None):
-        if kind not in ("refresh","scan","pair","connect","disconnect","test","print"):
+        if kind not in ("refresh","scan","pair","setup","connect","disconnect","test","print"):
             raise PrinterError("Unknown printer action.")
         if not isinstance(request_id,str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}",request_id):
             raise PrinterError("Invalid request identifier. Reload the page.")
@@ -101,8 +105,6 @@ class PrinterService:
                 raise PrinterError("A printer operation is already running. It will not be started twice.")
             if kind=="print" and snapshot is None:
                 raise PrinterError("Update the page preview before printing.")
-            if kind in ("print","test") and not self.link.state()["connected"]:
-                raise PrinterError("Connect to the printer first.")
             identifier = uuid.uuid4().hex
             self.task = {"id":identifier,"kind":kind,"status":"running","message":"Starting…",
                          "sent":0,"total":0,"started":time.time(),"finished":None}
@@ -140,13 +142,23 @@ class PrinterService:
                     self.driver = find_driver()
                 message = {"refresh":"Printer setup refreshed.","scan":"Scan complete. Select your printer below.",
                            "pair":"Printer paired and remembered. You can now connect."}[kind]
-            elif kind=="connect":
+            elif kind in ("connect","setup"):
+                if kind == "setup":
+                    bt = self.bluetooth()
+                    discovery = bt.devices()
+                    if not any(d["address"].upper()==config["address"] for d in discovery["devices"]):
+                        discovery = bt.scan(self.cancel_event,self.update)
+                    if self.cancel_event.is_set():
+                        raise Cancelled("Connection cancelled.")
+                    discovery = bt.pair(config["address"],self.cancel_event,self.update)
+                    with self.lock:
+                        self.discovery,self.discovery_error = discovery,None
                 self.update("Opening a Bluetooth serial connection…")
                 self.link.connect(config["address"],config["channel"])
                 if self.cancel_event.is_set():
                     self.link.disconnect()
                     raise Cancelled("Connection cancelled.")
-                message = "Bluetooth serial connection open. This does not confirm printing compatibility."
+                message = "F11 connected. Load A4 thermal paper, then press Print."
             elif kind=="disconnect":
                 self.link.disconnect()
                 message = "Printer connection closed. Pairing is retained."
@@ -162,7 +174,10 @@ class PrinterService:
             if kind in ("refresh","scan","pair"):
                 with self.lock:
                     self.discovery_error = str(exc)
-            self.finish(str(exc),"failed")
+            recovery = (" No automatic retry or mid-page resume. Let buffered printing finish, "
+                        "power-cycle the F11, load a fresh sheet and close other printer apps "
+                        "before printing the whole page again.") if kind in ("print","test") else ""
+            self.finish(str(exc) + recovery,"failed")
 
     def _print(self,snapshot,config,kind):
         import shutil
@@ -170,8 +185,14 @@ class PrinterService:
         shutil.rmtree(job_dir,ignore_errors=True)
         job_dir.mkdir()
         with self.lock:
-            self.report = {"app_version":"1.1.1","system":platform.platform(),"config":config,"kind":kind}
+            self.report = {"app_version":"1.2.1","system":platform.platform(),"config":config,"kind":kind}
             self.last_print = None
+        # Release any manually opened connection before preparing the job.
+        self.link.disconnect()
+        if kind == "print":
+            if snapshot[1].get("dpi") != 203 or snapshot[1].get("settings",{}).get("paper") != "a4":
+                raise PrinterError("Use A4 at 203 DPI for the Rongta F11, then update the preview.")
+            snapshot = render_prepared_pdf(snapshot[2],job_dir,self.cancel_event,self.update)
         data,info = prepare_job(snapshot[0],snapshot[1],config,job_dir,self.cancel_event,self.update)
         with self.lock:
             self.report["preparation"] = info
@@ -179,7 +200,16 @@ class PrinterService:
         self.update("Sending printer data over Bluetooth. Do not start another print job.",total=len(data))
         def progress(sent,total):
             self.update(f"Sending printer data: {sent:,} of {total:,} bytes.",sent=sent,total=total)
-        transfer = self.link.send(data,self.cancel_event,progress,config["chunk_size"],config["pause_ms"])
+        try:
+            if self.cancel_event.is_set():
+                raise Cancelled("Print cancelled. No data was sent.")
+            self.update("Connecting to the Rongta F11 for this page…")
+            self.link.connect(config["address"],config["channel"])
+            if self.cancel_event.is_set():
+                raise Cancelled("Print cancelled. No data was sent.")
+            transfer = self.link.send(data,self.cancel_event,progress,config["chunk_size"],config["pause_ms"])
+        finally:
+            self.link.disconnect()
         with self.lock:
             self.report["transfer"] = transfer
 
@@ -189,9 +219,9 @@ class PrinterService:
                 return self.state()
             self.cancel_event.set()
             kind = self.task["kind"]
-        if kind in ("test","print","connect"):
+        if kind in ("test","print","connect","setup"):
             self.link.disconnect()
-        if kind=="pair" and self.bluez:
+        if kind in ("pair","setup") and self.bluez:
             self.bluez.cancel_pairing()
         return self.state()
 

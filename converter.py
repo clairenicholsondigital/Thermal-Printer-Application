@@ -6,8 +6,9 @@ import math
 import os
 import re
 import subprocess
+import warnings
 
-from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
@@ -18,6 +19,37 @@ PAPER_MM = {"a4": (210, 297), "letter": (215.9, 279.4)}
 
 class ConversionError(ValueError):
     pass
+
+
+def inspect_upload(source, directory):
+    """Detect content, validate it, and normalise photos before conversion."""
+    with Path(source).open("rb") as stream:
+        header = stream.read(1024)
+    if b"%PDF-" in header:
+        return inspect_pdf(source), "pdf"
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(source) as image:
+                if image.format not in ("JPEG", "PNG"):
+                    raise ConversionError("Choose a PDF, JPG or PNG file.")
+                if image.width * image.height > 40_000_000:
+                    raise ConversionError("Choose an image under 40 megapixels.")
+                if getattr(image, "n_frames", 1) != 1:
+                    raise ConversionError("Choose a still PNG image, not an animation.")
+                image = ImageOps.exif_transpose(image)
+                image.thumbnail((RENDER_SIDE, RENDER_SIDE), Image.Resampling.LANCZOS)
+                # Transparent areas represent white paper, never black ink.
+                rgba = image.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, "white")
+                background.alpha_composite(rgba)
+                background.convert("RGB").save(Path(directory) / "source.png")
+        return 1, "image"
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError,
+            Image.DecompressionBombWarning) as exc:
+        if isinstance(exc, ConversionError):
+            raise
+        raise ConversionError("This image could not be read. Choose a valid JPG or PNG under 40 megapixels.") from exc
 
 
 @dataclass(frozen=True)
