@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 /usr/bin/python3 - <<'PY'
 from pathlib import Path
 import json
@@ -177,3 +178,4 @@ finally:
     link.disconnect()
     print(f"\nPrint files and error logs: {work}")
 PY
+

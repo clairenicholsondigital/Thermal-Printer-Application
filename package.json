@@ -1,0 +1,1 @@
+{"name":"thermal-prep-preview","private":true,"scripts":{"dev":"python3 app.py --preview --port 4173"}}
