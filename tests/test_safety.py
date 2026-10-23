@@ -121,6 +121,56 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(manager.restart_required);self.assertFalse(manager.enabled)
         self.assertEqual((root.parent/'thermal-prep-manager.py').read_text(),'# new bootstrap')
 
+    def test_readiness_sends_nothing_then_print_uses_identical_checked_job(self):
+        with patch('printer_service.prepare_job',return_value=(b'checked packet',{'test':True})) as prepare:
+            self.service.start('check','c'*32,self.snapshot,config=DEFAULTS);self.wait()
+            self.assertEqual(self.service.task['status'],'done')
+            self.assertEqual(self.link.sent,[])
+            self.assertFalse(self.link.connected)
+            self.assertFalse(self.service.state()['readiness']['print_data_sent'])
+            self.assertIsNone(self.service.paper_check)
+            self.start();self.wait()
+            prepare.assert_called_once()
+        self.assertEqual(self.link.sent,[b'checked packet'])
+        self.assertTrue(self.service.report['used_checked_job'])
+        self.assertIsNone(self.service.readiness)
+
+    def test_failed_readiness_never_sends_or_reports_ready(self):
+        for failure in ('driver','bluetooth'):
+            with patch('printer_service.prepare_job',side_effect=PrinterError('driver broken') if failure=='driver' else None,return_value=(b'raw',{})),patch.object(self.link,'connect',side_effect=PrinterError('offline')):
+                self.service.start('check',('d' if failure=='driver' else 'b')*32,self.snapshot,config=DEFAULTS);self.wait()
+            self.assertEqual(self.service.task['status'],'failed')
+            self.assertIsNone(self.service.readiness)
+            self.assertIsNone(self.service.checked_job)
+            self.assertIsNone(self.service.paper_check)
+            self.assertEqual(self.link.sent,[])
+
+    def test_changed_page_or_config_cannot_reuse_checked_packet(self):
+        with patch('printer_service.prepare_job',return_value=(b'checked',{})):
+            self.service.start('check','c'*32,self.snapshot,config=DEFAULTS);self.wait()
+        self.snapshot=(b'different pixels',self.snapshot[1],b'pdf')
+        with patch('printer_service.prepare_job',return_value=(b'fresh',{})) as prepare:
+            self.start();self.wait();prepare.assert_called_once()
+        self.assertEqual(self.link.sent,[b'fresh'])
+        self.service.paper_ready(self.service.paper_check['task_id'],True)
+        with patch('printer_service.prepare_job',return_value=(b'checked',{})):
+            self.service.start('check','d'*32,self.snapshot,config=DEFAULTS);self.wait()
+        self.service.save(DEFAULTS|{'density':15})
+        self.assertIsNone(self.service.checked_job)
+        self.assertIsNone(self.service.readiness)
+
+    def test_readiness_cancel_is_safe_and_existing_recovery_cannot_be_bypassed(self):
+        def stop(*args):
+            self.service.cancel_event.set()
+            return b'packet',{}
+        with patch('printer_service.prepare_job',side_effect=stop):
+            self.service.start('check','c'*32,self.snapshot,config=DEFAULTS);self.wait()
+        self.assertEqual(self.service.task['status'],'cancelled')
+        self.assertEqual(self.link.sent,[])
+        self.assertIsNone(self.service.checked_job)
+        self.service.paper_check={'status':'uncertain','task_id':'old'}
+        with self.assertRaises(PrinterError):self.service.start('check-test','d'*32,config=DEFAULTS)
+
 
 class CancelHTTPTests(unittest.TestCase):
     setUp=test_app.HTTPTests.setUp

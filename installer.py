@@ -60,7 +60,7 @@ def main():
         subprocess.run(["update-desktop-database", str(applications)], check=False)
     print("\nInstalled. Open Thermal Prep from your applications menu, or run:")
     print(f'/usr/bin/python3 "{target / "launch.py"}"')
-    print("The app opens at http://127.0.0.1:8877 on this Pi. Start with Scan, Pair & remember, then Print test page. Printing connects automatically.")
+    print("The app opens at http://127.0.0.1:8877 on this Pi. Start with Connect F11, then Check test pattern without printing. Only after checks pass, load one sheet and explicitly Print test page.")
     print("If an older version is still running, restart the Pi once before opening the updated app.")
 
 

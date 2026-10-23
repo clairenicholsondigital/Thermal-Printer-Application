@@ -82,8 +82,11 @@ def test_page():
 
 def run_stage(args, output, log, cancel, env=None, stdin=None, timeout=90):
     with Path(output).open("wb") as out, Path(log).open("ab") as err:
-        process = subprocess.Popen(args, stdout=out, stderr=err, stdin=stdin or subprocess.DEVNULL,
-                                   env=env, start_new_session=True)
+        try:
+            process = subprocess.Popen(args, stdout=out, stderr=err, stdin=stdin or subprocess.DEVNULL,
+                                       env=env, start_new_session=True)
+        except OSError as exc:
+            raise PrinterError(f"Could not start {Path(args[0]).name}: {exc.strerror}. Rerun the installer on the Pi to repair the driver and dependencies. No data was sent.") from exc
         deadline = time.monotonic() + timeout
         try:
             while process.poll() is None:
@@ -94,7 +97,7 @@ def run_stage(args, output, log, cancel, env=None, stdin=None, timeout=90):
                 if Path(output).stat().st_size > MAX_JOB or Path(log).stat().st_size > 2*1024*1024:
                     raise PrinterError("The driver produced unusually large output. No data was sent.")
             if process.returncode:
-                raise PrinterError("The F11 driver failed while preparing this page. Download diagnostics for its error log. No data was sent.")
+                raise PrinterError(f"{Path(args[0]).name} failed (exit {process.returncode}). Download diagnostics for its error log; rerun the installer if dependencies are missing. No data was sent.")
             if Path(output).stat().st_size > MAX_JOB or Path(log).stat().st_size > 2*1024*1024:
                 raise PrinterError("The driver produced unusually large output. No data was sent.")
             if cancel.is_set():

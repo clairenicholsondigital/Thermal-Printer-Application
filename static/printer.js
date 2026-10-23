@@ -3,7 +3,7 @@
 (() => {
   const controls = {address:'printer-address',channel:'printer-channel',media:'printer-media',density:'printer-density',print_mode:'printer-mode',chunk_size:'printer-chunk',pause_ms:'printer-pause'};
   let state = null, initialised = false, pending = false, reachable = false, questionId = null, timer = null, notice = null;
-  const operationButtons = ['scan-printers','refresh-printer','pair-printer','connect-printer','disconnect-printer','save-printer','print-test','print-page'];
+  const operationButtons = ['scan-printers','refresh-printer','pair-printer','connect-printer','disconnect-printer','save-printer','print-test','print-page','check-page','check-test'];
   const config = () => Object.fromEntries(Object.entries(controls).map(([key,id])=>[key,key==='address'?$(id).value.trim().toUpperCase():Number($(id).value)]));
   const error = text => {$('printer-error').textContent=text;$('printer-error').hidden=!text;};
   const post = (path,data) => api('/api/printer/'+path,JSON.stringify(data),{'Content-Type':'application/json'});
@@ -14,12 +14,19 @@
     const selected = config();
     $('quality-summary').textContent=`${{1:'Light',8:'Moderate',15:'Dark'}[selected.density]} density (${selected.density}) · ${selected.media===101?'loose A4 sheet':'folded A4 paper'} · settings saved when you connect or print.`;
     const matches = connected && state.connection.address===selected.address && state.connection.channel===selected.channel;
+    const checked = state && state.readiness;
+    const matching = checked && result && !dirty && !busy && checked.preview_sha256===result.preview_sha256 && Object.keys(selected).every(key=>selected[key]===checked.config[key]);
+    $('readiness-message').textContent=checked
+      ? `${matching?'This page':'A test or earlier page'} passed driver and Bluetooth checks. No print data sent. ${checked.bytes.toLocaleString()} bytes; allow at least ${Math.ceil(checked.minimum_seconds)} seconds for transfer. Physical printing still needs one explicit test.`
+      : 'Run a check before your first Pi trial: the real driver and Bluetooth are tested without sending print data or feeding paper.';
     const ready = reachable && state && state.driver.ready;
     for(const id of operationButtons)$(id).disabled=running || !reachable;
     for(const id of Object.values(controls))$(id).disabled=running;
     $('printer-device').disabled=running;
     $('disconnect-printer').disabled=running || !connected;
     $('connect-printer').disabled=running || !reachable || matches;
+    $('check-page').disabled=running || !!(state && state.paper_check) || !ready || !job || !result || dirty || busy || !result.black_pixels;
+    $('check-test').disabled=running || !!(state && state.paper_check) || !ready;
     $('print-test').disabled=running || !ready || !!(state && state.paper_check);
     $('connect-printer').textContent=matches?'F11 connected':'Connect F11';
     $('print-page').textContent=running && state && state.task && state.task.kind==='print'?'Printing…':'Print';
@@ -96,10 +103,11 @@
   async function action(kind) {
     // Capture the page at the click, before awaiting any network request.
     const payload={action:kind,request_id:requestId()};
-    if(kind==='print'){
+    if(['print','check'].includes(kind)){
       if(!job || !result || dirty || busy)return;
       payload.document_id=job.id;payload.result_id=result.base.split('/')[4];
     }
+    if(['check','check-test'].includes(kind))payload.config=config();
     if(['print','test'].includes(kind)){
       payload.config=config();
       const approved=await review(kind,payload.config);
@@ -107,7 +115,7 @@
       payload.confirmed=true;payload.warnings_confirmed=true;
     }
     await exclusive(async()=>{
-      if(!['refresh','scan','disconnect','print','test'].includes(kind))await post('config',config());
+      if(!['refresh','scan','disconnect','print','test','check','check-test'].includes(kind))await post('config',config());
       await post('action',payload);
     });
   }
@@ -137,7 +145,7 @@
   $('paper-ready').addEventListener('click',()=>{
     if(state && state.paper_check)exclusive(()=>post('paper-ready',{task_id:state.paper_check.task_id,confirmed:true}));
   });
-  for(const [id,kind] of Object.entries({'scan-printers':'scan','refresh-printer':'refresh','pair-printer':'pair','connect-printer':'setup','disconnect-printer':'disconnect','print-test':'test','print-page':'print'}))$(id).addEventListener('click',()=>action(kind));
+  for(const [id,kind] of Object.entries({'scan-printers':'scan','refresh-printer':'refresh','pair-printer':'pair','connect-printer':'setup','disconnect-printer':'disconnect','print-test':'test','print-page':'print','check-page':'check','check-test':'check-test'}))$(id).addEventListener('click',()=>action(kind));
   $('save-printer').addEventListener('click',()=>exclusive(async()=>{await post('config',config());notice='Printer settings saved.';}));
   $('cancel-printer').addEventListener('click',()=>exclusive(()=>post('cancel',{})));
   async function answer(reject){

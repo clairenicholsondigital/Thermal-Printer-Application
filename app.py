@@ -260,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
             if path != "/api/printer/action":
                 return self.error("Not found.",404)
             snapshot = None
-            if data.get("action") == "print":
+            if data.get("action") in ("print","check"):
                 if not self.server.lock.acquire(blocking=False):
                     return self.error("Wait for the page conversion to finish before printing.",409)
                 try:

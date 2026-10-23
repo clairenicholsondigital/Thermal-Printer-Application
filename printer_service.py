@@ -1,6 +1,7 @@
 """One explicit operation at a time, with idempotent print requests and cancellation."""
 from collections import OrderedDict
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import platform
@@ -68,6 +69,8 @@ class PrinterService:
         self.discovery_error = None
         self.driver = find_driver()
         self.report = {}
+        self.checked_job = None
+        self.readiness = None
         self.last_print = None
         self.paper_path = self.config_path.with_name("paper-state.json")
         self.paper_check = None
@@ -107,7 +110,7 @@ class PrinterService:
                              "discovery":self.discovery,"bluetooth_error":self.discovery_error,
                              "connection":self.link.state(),"prompt":self.prompts.public(),
                              "pairing_display":self.bluez.display if self.bluez else None,
-                             "last_print":self.last_print,"paper_check":self.paper_check,"config_warning":self.config_warning})
+                             "last_print":self.last_print,"paper_check":self.paper_check,"config_warning":self.config_warning,"readiness":self.readiness})
 
     def active(self):
         with self.lock:
@@ -122,6 +125,9 @@ class PrinterService:
             self.config_path.parent.mkdir(parents=True,exist_ok=True)
             atomic_json(self.config_path, config | {"settings_version":2})
             self.config_warning = None
+            if config != old:
+                self.checked_job = None
+                self.readiness = None
             self.config = config
             if (old["address"],old["channel"]) != (config["address"],config["channel"]):
                 self.link.disconnect()
@@ -129,7 +135,7 @@ class PrinterService:
             return self.state()
 
     def start(self, kind, request_id, snapshot=None, config=None, confirmed=False, warnings_confirmed=False):
-        if kind not in ("refresh","scan","pair","setup","connect","disconnect","test","print"):
+        if kind not in ("refresh","scan","pair","setup","connect","disconnect","test","print","check","check-test"):
             raise PrinterError("Unknown printer action.")
         if not isinstance(request_id,str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}",request_id):
             raise PrinterError("Invalid request identifier. Reload the page.")
@@ -138,8 +144,10 @@ class PrinterService:
                 return {"task_id":self.seen[request_id],"duplicate":True}
             if self.active():
                 raise PrinterError("A printer operation is already running. It will not be started twice.")
-            if kind=="print" and snapshot is None:
+            if kind in ("print","check") and snapshot is None:
                 raise PrinterError("Update the page preview before printing.")
+            if kind in ("check","check-test") and self.paper_check:
+                raise PrinterError("Finish the previous paper check before opening another connection.")
             if kind in ("print", "test"):
                 if self.paper_check:
                     raise PrinterError("Check the previous print and confirm a fresh sheet before printing again.")
@@ -203,6 +211,11 @@ class PrinterService:
                     self.link.disconnect()
                     raise Cancelled("Connection cancelled.")
                 message = "F11 connected. Load A4 thermal paper, then press Print."
+            elif kind in ("check","check-test"):
+                if kind == "check-test":
+                    snapshot = test_page()
+                self._check(snapshot,config)
+                message = "Checks passed: one F11 page prepared and Bluetooth connection opened. No print data sent. Review the preview, then explicitly print one sheet."
             elif kind=="disconnect":
                 self.link.disconnect()
                 message = "Printer connection closed. Pairing is retained."
@@ -223,22 +236,63 @@ class PrinterService:
                         "before printing the whole page again.") if kind in ("print","test") and self.paper_check else ""
             self.finish(str(exc) + recovery,"failed")
 
-    def _print(self,snapshot,config,kind):
+    @staticmethod
+    def job_key(snapshot,config):
+        return hashlib.sha256(snapshot[0]+json.dumps(config,sort_keys=True).encode()).hexdigest()
+
+    def prepare(self,snapshot,config,kind):
         import shutil
         job_dir = self.directory/"last-job"
         shutil.rmtree(job_dir,ignore_errors=True)
         job_dir.mkdir()
         with self.lock:
             self.report = {"app_version":metadata(Path(__file__).resolve().parent)["version"],"system":platform.platform(),"config":config,"kind":kind}
-            self.last_print = None
-        # Release any manually opened connection before preparing the job.
-        self.link.disconnect()
-        if kind == "print":
-            if snapshot[1].get("dpi") != 203 or snapshot[1].get("settings",{}).get("paper") != "a4":
-                raise PrinterError("Use A4 at 203 DPI for the Rongta F11, then update the preview.")
+        if snapshot[1].get("dpi") != 203 or snapshot[1].get("settings",{}).get("paper") != "a4":
+            raise PrinterError("Use A4 at 203 DPI for the Rongta F11, then update the preview.")
         data,info = prepare_job(snapshot[0],snapshot[1],config,job_dir,self.cancel_event,self.update)
         with self.lock:
             self.report["preparation"] = info
+        return data,info
+
+    def _check(self,snapshot,config):
+        with self.lock:
+            self.checked_job = None
+            self.readiness = None
+        self.link.disconnect()
+        data,info = self.prepare(snapshot,config,"check")
+        try:
+            if self.cancel_event.is_set():
+                raise Cancelled("Check cancelled. No print data sent.")
+            self.update("Driver check passed. Checking Bluetooth without sending print data…")
+            self.link.connect(config["address"],config["channel"])
+            if self.cancel_event.is_set():
+                raise Cancelled("Check cancelled. No print data sent.")
+            if self.cancel_event.wait(1):
+                raise Cancelled("Check cancelled. No print data sent.")
+            if not self.link.state()["connected"]:
+                raise PrinterError("Bluetooth disconnected during the check. No print data sent.")
+        finally:
+            self.link.disconnect()
+        with self.lock:
+            self.checked_job = (self.job_key(snapshot,config),data,info)
+            self.readiness = {"preview_sha256":hashlib.sha256(snapshot[0]).hexdigest(),"config":config,
+                              "bytes":len(data),"minimum_seconds":round(((len(data)+255)//256)*config["pause_ms"]/1000,1),
+                              "checked_at":time.time(),"print_data_sent":False}
+            self.report["readiness"] = deepcopy(self.readiness)
+
+    def _print(self,snapshot,config,kind):
+        self.link.disconnect()
+        with self.lock:
+            cached = self.checked_job
+            self.checked_job = None
+            self.readiness = None
+            self.last_print = None
+        if cached and cached[0] == self.job_key(snapshot,config):
+            _,data,info = cached
+            with self.lock:
+                self.report.update(kind=kind,preparation=info,used_checked_job=True)
+        else:
+            data,info = self.prepare(snapshot,config,kind)
         self.update("Sending printer data over Bluetooth. Do not start another print job.",total=len(data))
         def progress(sent,total):
             self.update(f"Sending printer data: {sent:,} of {total:,} bytes.",sent=sent,total=total)
@@ -266,7 +320,7 @@ class PrinterService:
                 return self.state()
             self.cancel_event.set()
             kind = self.task["kind"]
-        if kind in ("test","print","connect","setup"):
+        if kind in ("test","print","connect","setup","check","check-test"):
             self.link.disconnect()
         if kind in ("pair","setup") and self.bluez:
             self.bluez.cancel_pairing()

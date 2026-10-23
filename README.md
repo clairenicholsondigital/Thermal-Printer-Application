@@ -1,4 +1,4 @@
-# Thermal Prep 1.3.1
+# Thermal Prep 1.3.2
 
 A local PDF/image preparation and experimental Rongta F11 Bluetooth printing app for a Raspberry Pi 5 running **Raspberry Pi OS 64-bit with a desktop**. Upload a PDF, JPG or PNG, inspect the automatically prepared preview, connect the F11, then print one page. PNG and PDF downloads remain available.
 
@@ -195,3 +195,17 @@ Sparse/heavy coverage warnings must be acknowledged in the final print check. Ch
 Malformed preference files are preserved as `printer.json.invalid-*` alongside the settings file. The app starts with defaults and shows a warning to verify the address and paper. Print diagnostics read the current release version.
 
 Updates now flush staged files, the recovery journal and folder changes to storage before proceeding. Existing installations using the older supervisor receive its replacement automatically when this app starts and must restart the Pi once to activate it; further in-app installs are blocked until then. Fresh installs use the new supervisor immediately. This reduces power-loss risk but is not protection against failing storage hardware. Routine updates still need only GitHub, with no VPS service.
+
+## First Pi trial (1.3.2)
+
+This is the recommended next hardware trial; no further feature work is required before trying it.
+
+1. Install the latest release on the Pi, or use **Check for updates → Update & restart app**. Restart the Pi once if requested. Close the terminal printing script and other printer apps.
+2. Turn on the F11, select **Loose A4 sheet**, density **8**, and use **Connect F11** to pair if needed.
+3. Choose **Check test pattern without printing**. This runs the actual installed CUPS/F11 driver, validates a single-page job and opens/closes Bluetooth without sending print data. If it fails, download diagnostics and resolve that failure before using paper.
+4. Only after checks pass, load thermal paper printing side upwards, choose **Print one A4 test sheet**, and confirm the review. The pattern uses one full sheet even though its marks are small. Record the physical result. A successful connection or transfer does not prove a successful print.
+5. If the pattern is correct, load your image and try the one-sheet detail comparison at density 8. Choose **Check this page without printing**, inspect the preview, then explicitly print. Stop if the first sheet is blank or distorted; retain diagnostics rather than trying repeated sheets.
+
+The check caches the exact validated printer bytes. Printing the same page with the same settings consumes that cached job; changed artwork/settings cannot reuse it. The check is optional for later routine prints, which still run all preparation and single-page validation before transmission. Checks cannot bypass an outstanding interrupted-print/paper recovery requirement. The reported duration is a minimum based on packet pacing, not a prediction of physical print completion.
+
+A no-paper check catches driver execution/dependency and connection failures. It cannot measure thermal-side loading, feed alignment, print density quality or radio reliability during a full transfer. The existing working terminal script and its driver route are retained.

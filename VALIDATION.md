@@ -1,3 +1,11 @@
+# Version 1.3.2 first-Pi-trial readiness
+
+62 automated tests passed. New tests prove that the readiness check sends no print data, closes its Bluetooth connection, caches the prepared bytes, and uses those identical bytes for an unchanged subsequent print. Driver/connection failures and cancellation leave no ready job; changed pages or settings cannot reuse an old checked packet. The existing paper recovery requirement blocks checks from opening another connection prematurely.
+
+The Chromium desktop/mobile flow passed upload, real PDF/image preparation, comparison generation, no-paper readiness check with simulated Bluetooth/driver output, explicit print approval, consumption of the cached job and next-sheet confirmation. No JavaScript errors were observed. Syntax and whitespace checks passed.
+
+No real Pi or F11 was contacted. The readiness check intentionally executes the actual installed driver on the Pi, where architecture, shared libraries and Bluetooth availability can be checked without transmitting a print job. Physical paper feed, thermal-side loading, image quality and sustained radio transfer remain hardware tests. Follow the first-trial checklist in README.md and stop after a failed first sheet.
+
 # Version 1.3.1 safety review fixes
 
 58 automated tests passed. New regression checks cover cancellation during conversion without bypassing authentication; atomic print settings and mandatory preflight/quality acknowledgments; blocking repeated prints after a successful transfer; recovery guards surviving reconnects and restarts; distinguishing preparation failures from uncertain transmissions; corrupt settings preservation; native-scale comparison crops; transfers longer than five minutes with partial socket writes; stalled transfers; durable journal writes; and migration of the older updater supervisor. The final cached preview is checked against real Poppler output and passed unchanged into preparation.

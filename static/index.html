@@ -61,7 +61,9 @@
   </div>
   <section class="panel printer-panel" aria-label="Bluetooth printer">
     <div class="printer-title"><div><p class="eyebrow">From preview to paper</p><h2><span class="step">3</span>Connect &amp; print</h2></div><span class="connection-badge" id="connection-badge">Not connected</span></div>
-    <p>Turn on your F11 and load A4 thermal paper. Use the same paper for comparisons and close any other printer app.</p>
+    <p>First Pi trial: turn on the F11 and close other printer apps. Connect, then run a check without printing. Load paper only when you are ready to print one sheet.</p>
+    <div class="printer-toolbar"><button id="check-page" class="secondary" disabled>Check this page without printing</button><button id="check-test" class="secondary">Check test pattern without printing</button></div>
+    <p id="readiness-message" class="hint">The check runs the real driver and opens Bluetooth, but sends no print data and feeds no paper. It cannot confirm paper loading or physical print quality.</p>
     <div class="printer-print-actions"><button type="button" id="connect-printer" class="secondary">Connect F11</button><button type="button" id="print-page" class="primary" disabled>Print</button></div>
     <p class="hint" id="print-requirements">Upload a file to prepare your first print.</p>
     <p class="hint" id="quality-summary">Moderate density · loose A4 sheet</p>
@@ -82,7 +84,7 @@
         <select id="printer-pause"><option value="50">50 ms</option></select>
       </div>
       <div class="printer-toolbar"><button type="button" id="pair-printer" class="secondary">Pair &amp; remember</button><button type="button" id="disconnect-printer" class="quiet" disabled>Disconnect</button><button type="button" id="save-printer" class="quiet">Save printer</button></div>
-      <div class="printer-toolbar"><button type="button" id="print-test" class="secondary" disabled>Print test page</button><a href="/api/printer/test-page.png" target="_blank" rel="noopener" class="quiet">View test pattern</a></div>
+      <div class="printer-toolbar"><button type="button" id="print-test" class="secondary" disabled>Print one A4 test sheet</button><a href="/api/printer/test-page.png" target="_blank" rel="noopener" class="quiet">View test pattern</a></div><p class="hint">The test has small marks but uses one whole A4 sheet. Check it first; do not start a detailed image if it is blank or distorted.</p>
     </details>
     <div id="printer-message" role="status" aria-live="polite">No printer operation is running.</div><div id="printer-error" role="alert" hidden></div>
     <div id="pairing-question" hidden><strong id="pairing-message"></strong><div class="printer-toolbar"><input id="pairing-value" type="password" autocomplete="off" aria-label="Printer pairing PIN or passkey"><button id="pairing-submit" class="primary">Submit PIN</button><button id="pairing-reject" class="secondary">Cancel pairing</button></div></div>

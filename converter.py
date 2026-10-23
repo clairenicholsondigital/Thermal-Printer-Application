@@ -1,6 +1,7 @@
 """Local, deterministic PDF to monochrome artwork conversion."""
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+import hashlib
 import io
 import threading
 import json
@@ -267,6 +268,7 @@ def export_result(original, settings, directory, comparison=None):
                         black_pixels=final.convert("L").histogram()[0])
         metadata["coverage"] = round(100*metadata["black_pixels"]/(final.width*final.height),3)
     metadata["preview_stage"] = "driver-input"
+    metadata["preview_sha256"] = hashlib.sha256(final_png).hexdigest()
     preview = original.copy()
     preview.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
     preview.save(directory / "original.png")
