@@ -83,8 +83,11 @@ class ConverterTests(unittest.TestCase):
                 self.assertAlmostEqual(float(page.mediabox.width),297/25.4*72,places=3)
                 self.assertAlmostEqual(float(page.mediabox.height),210/25.4*72,places=3)
                 image=list(page.images)[0].image.convert("L")
-                self.assertEqual(image.size,png.size)
-                self.assertIsNone(ImageChops.difference(image,png.convert("L")).getbbox())
+                from printer_driver import render_prepared_pdf
+                expected,_=render_prepared_pdf((path/"thermal.pdf").read_bytes(),path,threading.Event(),lambda _:None)
+                with Image.open(io.BytesIO(expected)) as final:
+                    self.assertEqual(final.size,png.size)
+                    self.assertEqual(final.tobytes(),png.tobytes())
                 self.assertAlmostEqual(png.info["dpi"][0],203,delta=.1)
 
     def test_multipage_render_and_encrypted_rejection(self):

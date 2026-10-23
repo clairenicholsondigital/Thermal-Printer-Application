@@ -12,7 +12,7 @@
       $('check-updates').disabled=busy;
       $('install-update').disabled=busy || !state.enabled || state.status!=='ready';
       $('restore-update').disabled=busy || !state.can_restore;
-      note.textContent=state.message + (!state.enabled?' In-app installation is available after running the installer on your 64-bit Pi and opening the app from its menu.':'');
+      note.textContent=(state.restart_required?'Restart the Pi once to activate safer updates. ':state.message) + (!state.enabled && !state.restart_required?' In-app installation is available after running the installer on your 64-bit Pi and opening the app from its menu.':'');
       $('release-notes').textContent=state.available?`Version ${state.available.version}\n${state.available.notes}`:'';
       if(busy && !polling)setTimeout(refresh,1000);
     }catch(e){note.textContent='The app is restarting or unavailable. Reopen Thermal Prep if it does not return.';}

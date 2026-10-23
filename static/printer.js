@@ -20,7 +20,7 @@
     $('printer-device').disabled=running;
     $('disconnect-printer').disabled=running || !connected;
     $('connect-printer').disabled=running || !reachable || matches;
-    $('print-test').disabled=running || !ready;
+    $('print-test').disabled=running || !ready || !!(state && state.paper_check);
     $('connect-printer').textContent=matches?'F11 connected':'Connect F11';
     $('print-page').textContent=running && state && state.task && state.task.kind==='print'?'Printing…':'Print';
     let reason = 'The app connects to the Rongta F11 automatically for each print.';
@@ -32,10 +32,17 @@
     else if(ready && !result.black_pixels)reason='The prepared page is blank. Adjust the preview before printing.';
     else if(ready)reason=`Prints selected page ${result.settings.page} once. ${result.orientation==='landscape'?'Landscape artwork is rotated to feed through the A4 print head.':'Load the matching paper before printing.'}`;
     $('print-requirements').textContent=reason;
-    $('print-page').disabled=running || !ready || !job || !result || dirty || busy || (result.dpi!==203 || result.settings.paper!=='a4') || !result.black_pixels;
+    $('print-page').disabled=running || !!(state && state.paper_check) || !ready || !job || !result || dirty || busy || (result.dpi!==203 || result.settings.paper!=='a4') || !result.black_pixels;
     $('connection-badge').textContent=!reachable?'Status unavailable':connected?'Connected via Bluetooth':'Connects when you print';
     $('connection-badge').classList.toggle('connected',connected);
     if(!state)return;
+    $('config-warning').hidden=!state.config_warning;
+    $('config-warning').textContent=state.config_warning || '';
+    $('paper-check').hidden=!state.paper_check;
+    $('paper-ready').disabled=running;
+    $('paper-check-message').textContent=state.paper_check && state.paper_check.status==='uncertain'
+      ? 'Printing may have been interrupted. Let buffered printing finish, switch the F11 off and on, then load a fresh sheet. Confirm only when these steps are complete.'
+      : 'Check that the previous print has finished, remove it and load the next sheet before printing again.';
     $('driver-status').textContent=state.driver.message;
     $('driver-status').classList.toggle('available',state.driver.ready);
     const device=state.discovery.devices.find(d=>d.address.toUpperCase()===selected.address);
@@ -59,7 +66,7 @@
     } else {questionId=null;$('pairing-value').value='';}
     $('pairing-submit').disabled=pending;$('pairing-reject').disabled=pending;
     $('print-outcome').hidden=!state.last_print || running;
-    const descriptions={unconfirmed:'A completed transfer only means the bytes were sent. Check the actual paper.',visible:'Printed — confirmed by you. Ready for your next page.',blank:'Recorded: blank sheet. Check the thermal side and paper feed, then download diagnostics. The Bluetooth printing issue is still unresolved.', 'no-response':'Recorded: no response. Check paper, printer state and connection, then download diagnostics.',distorted:'Recorded: distorted output. Check paper size and feed settings, then download diagnostics.'};
+    const descriptions={unconfirmed:'A completed transfer only means the bytes were sent. Check the actual paper.',visible:'Printed — confirmed by you. Load the next sheet and confirm paper is ready.',blank:'Recorded: blank sheet. Check the thermal side and paper feed, then download diagnostics. The Bluetooth printing issue is still unresolved.', 'no-response':'Recorded: no response. Check paper, printer state and connection, then download diagnostics.',distorted:'Recorded: distorted output. Check paper size and feed settings, then download diagnostics.'};
     if(state.last_print)$('outcome-message').textContent=descriptions[state.last_print.outcome];
     for(const button of document.querySelectorAll('[data-outcome]')){button.disabled=running;button.classList.toggle('selected',!!state.last_print && button.dataset.outcome===state.last_print.outcome);}
   }
@@ -93,14 +100,43 @@
       if(!job || !result || dirty || busy)return;
       payload.document_id=job.id;payload.result_id=result.base.split('/')[4];
     }
-    if(['print','test'].includes(kind) && state && state.task && ['print','test'].includes(state.task.kind) && ['failed','cancelled'].includes(state.task.status)){
-      if(!window.confirm('This prints the WHOLE page again; it cannot resume. Let buffered printing finish, switch the F11 off and on, load a fresh A4 sheet and close other printer apps. Ready to print?'))return;
+    if(['print','test'].includes(kind)){
+      payload.config=config();
+      const approved=await review(kind,payload.config);
+      if(!approved)return;
+      payload.confirmed=true;payload.warnings_confirmed=true;
     }
     await exclusive(async()=>{
-      if(!['refresh','scan','disconnect'].includes(kind))await post('config',config());
+      if(!['refresh','scan','disconnect','print','test'].includes(kind))await post('config',config());
       await post('action',payload);
     });
   }
+  let reviewing=false;
+  async function review(kind,selected) {
+    if(reviewing)return false;
+    reviewing=true;
+    const warnings=kind==='print'?result.warnings:[];
+    $('review-thumbnail').src=kind==='print'?result.base+'thermal.png':'/api/printer/test-page.png';
+    $('review-summary').textContent=`${kind==='print'?job.name+' · page '+result.settings.page+(result.comparison?' · detail comparison':''):'Test pattern'} · A4 · ${selected.media===101?'Single loose sheet (101)':'Folded paper (103)'} · density ${selected.density} · ${kind==='print'?result.orientation:'portrait'} · 203 dpi · F11 ${selected.address}`;
+    $('review-warning').textContent=[state.config_warning,...warnings].filter(Boolean).join(' ');
+    $('review-warning').hidden=!$('review-warning').textContent;
+    $('review-paper').checked=false;$('review-quality').checked=false;
+    $('review-quality-label').hidden=!warnings.length;
+    const dialog=$('print-review');dialog.showModal();
+    return new Promise(resolve=>{
+      const done=value=>{dialog.close();reviewing=false;resolve(value);};
+      $('review-print').onclick=()=>{
+        if(!$('review-paper').checked || (warnings.length && !$('review-quality').checked))return;
+        done(true);
+      };
+      $('review-cancel').onclick=()=>done(false);
+      dialog.oncancel=e=>{e.preventDefault();done(false);};
+      $('review-inspect').onclick=()=>{done(false);if(kind==='print'){applyZoom(2);$('output-well').scrollIntoView({behavior:'smooth'});}};
+    });
+  }
+  $('paper-ready').addEventListener('click',()=>{
+    if(state && state.paper_check)exclusive(()=>post('paper-ready',{task_id:state.paper_check.task_id,confirmed:true}));
+  });
   for(const [id,kind] of Object.entries({'scan-printers':'scan','refresh-printer':'refresh','pair-printer':'pair','connect-printer':'setup','disconnect-printer':'disconnect','print-test':'test','print-page':'print'}))$(id).addEventListener('click',()=>action(kind));
   $('save-printer').addEventListener('click',()=>exclusive(async()=>{await post('config',config());notice='Printer settings saved.';}));
   $('cancel-printer').addEventListener('click',()=>exclusive(()=>post('cancel',{})));

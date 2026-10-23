@@ -43,23 +43,23 @@ async function upload(file) {
   finally {$('file').value='';}
 }
 function imageLoaded(element, url) {return new Promise((resolve,reject)=>{element.onload=resolve;element.onerror=()=>reject(new Error('The preview could not be loaded. Update it to try again.'));element.src=url;});}
-async function convert() {
+async function convert(comparison=null) {
   clearTimeout(preparationTimer);
   if(!job || busy)return;
   if(!$('margin').checkValidity()){$('margin').reportValidity();return;}
   clearError(); setBusy(true); downloads(false); message('Rendering your page and preparing its pixels…',true);
   try {
-    const data=await api('/api/convert',JSON.stringify({id:job.id,settings:settings()}),{'Content-Type':'application/json'});
+    const data=await api('/api/convert',JSON.stringify({id:job.id,settings:settings(),comparison}),{'Content-Type':'application/json'});
     await Promise.all([imageLoaded($('original'),data.base+'original.png'),imageLoaded($('prepared'),data.base+'thermal.png')]);
     result=data; dirty=false; $('empty').hidden=true; $('comparison').hidden=false;
     $('dimensions').textContent=`${data.width.toLocaleString()} × ${data.height.toLocaleString()} px · ${data.dpi} DPI`;
     $('paper-info').textContent=`${data.settings.paper==='a4'?'A4':'Letter'} · ${data.orientation}`;
     $('coverage').textContent=`${data.coverage.toFixed(2)}%`;
-    $('prepared-label').textContent=data.settings.mode==='dither'?'Detail-preserving dots':'Solid black and white';
+    $('prepared-label').textContent=data.comparison?'Three detail comparisons':data.settings.mode==='dither'?'Detail-preserving dots':'Solid black and white';
     $('warnings').replaceChildren();
     for(const warning of data.warnings){const p=document.createElement('p');p.textContent=warning;$('warnings').append(p);}
     $('warnings').hidden=!data.warnings.length;
-    $('download-note').textContent=`Selected page ${data.settings.page}. Both downloads use the pixels shown above.`;
+    $('download-note').textContent=`Selected page ${data.settings.page}. PNG shows the exact cached driver input. PDF is the source used to prepare it.`;
     for(const id of ['fit','actual','double'])$(id).disabled=false;
     applyZoom(zoom); downloads(true); message(data.black_pixels?'Ready. Check the preview, connect your F11 and press Print.':'Preview ready, but the output contains no black pixels.');
   } catch(error){dirty=true;fail(error);message('Preview could not be updated.');$('download-note').textContent='Update the preview successfully before downloading.';}
@@ -77,7 +77,7 @@ async function reset() {
   try {await api('/api/reset','');job=null;result=null;dirty=false;downloads(false);$('document').hidden=true;$('dropzone').hidden=false;$('comparison').hidden=true;$('empty').hidden=false;$('original').removeAttribute('src');$('prepared').removeAttribute('src');for(const id of ['fit','actual','double'])$(id).disabled=true;message('Choose a PDF, JPG or PNG to get started.');$('download-note').textContent='Downloads become available after conversion.';}catch(error){fail(error);}finally{setBusy(false);}
 }
 $('file').addEventListener('change',event=>upload(event.target.files[0]));
-$('clear').addEventListener('click',reset);$('convert').addEventListener('click',convert);
+$('clear').addEventListener('click',reset);$('convert').addEventListener('click',()=>convert());
 $('page').addEventListener('change',()=>{markDirty();convert();});
 for(const id of fields)$(id).addEventListener('input',markDirty);
 function applyPreset(type) {
@@ -92,3 +92,9 @@ $('dropzone').addEventListener('drop',e=>upload(e.dataTransfer.files[0]));
 // Prevent an accidental drop outside the target from navigating away from the app.
 document.addEventListener('dragover',e=>e.preventDefault());document.addEventListener('drop',e=>e.preventDefault());
 downloads(false);updateLabels();
+
+$('make-comparison').addEventListener('click',()=>{
+  if(!$('detail-x').reportValidity() || !$('detail-y').reportValidity())return;
+  convert({x:Number($('detail-x').value),y:Number($('detail-y').value)});
+});
+$('normal-page').addEventListener('click',()=>convert());

@@ -104,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed_host():
             return self.error("Open the app using its local address.", 403)
         if path == "/":
-            html = (ROOT / "static/index.html").read_text().replace("__TOKEN__", self.server.token)
+            html = (ROOT / "static/index.html").read_text().replace("__TOKEN__", self.server.token).replace("__VERSION__", APP_VERSION)
             return self.send_bytes(html.encode(), "text/html; charset=utf-8", cookie=True)
         if path == "/health":
             return self.json_response({"app": "thermal-prep", "version": APP_VERSION, "instance": self.server.instance})
@@ -152,6 +152,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorised(mutate=True):
             return
+        if urlsplit(self.path).path in ("/api/printer/cancel", "/api/printer/answer"):
+            return self.printer_request(urlsplit(self.path).path)
         if not self.server.operation_gate.acquire(blocking=False):
             return self.error("Another operation is running. Wait for it to finish.",409)
         try:
@@ -213,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             result_id = uuid.uuid4().hex
             directory = job["dir"] / result_id
             try:
-                metadata = export_result(original, settings, directory)
+                metadata = export_result(original, settings, directory, body.get("comparison"))
             except Exception:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise
@@ -249,6 +251,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/printer/answer":
                 service.answer(data)
                 return self.json_response({"ok":True})
+            if path == "/api/printer/paper-ready":
+                service.paper_ready(data.get("task_id"), data.get("confirmed"))
+                return self.json_response({"ok":True})
             if path == "/api/printer/outcome":
                 service.outcome(data.get("task_id"),data.get("outcome"))
                 return self.json_response({"ok":True})
@@ -267,7 +272,8 @@ class Handler(BaseHTTPRequestHandler):
                                 (folder / "thermal.pdf").read_bytes())
                 finally:
                     self.server.lock.release()
-            return self.json_response(service.start(data.get("action"),data.get("request_id"),snapshot),202)
+            return self.json_response(service.start(data.get("action"),data.get("request_id"),snapshot,
+                config=data.get("config"), confirmed=data.get("confirmed"), warnings_confirmed=data.get("warnings_confirmed")),202)
         except (ValueError,TypeError) as exc:
             self.error(str(exc),400)
         except Exception:

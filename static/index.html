@@ -44,12 +44,19 @@
       <div id="status" role="status" aria-live="polite">Choose a PDF, JPG or PNG to get started.</div>
       <div id="error" role="alert" hidden></div>
       <div id="empty" class="empty"><div class="paper-illustration" aria-hidden="true"><div class="paper-mark">PDF</div><div class="ink-line long"></div><div class="ink-line"></div><div class="dot-grid"></div><div class="ink-line short"></div></div><h3>Less guesswork.<br>More useful printouts.</h3><p>Crop the empty space, keep the important details<br>and inspect the black-and-white result.</p><span class="empty-tag">No printing until you are ready</span></div>
-      <div id="comparison" hidden><div class="preview-grid"><figure><figcaption><span>Original</span><small>Colour source</small></figcaption><div class="image-well original-well"><img id="original" alt="Original selected page or image"></div></figure><figure><figcaption><span>Prepared</span><small id="prepared-label">Monochrome</small></figcaption><div class="image-well" id="output-well"><img id="prepared" alt="Prepared monochrome page, the same pixels used in the downloads"></div></figure></div>
+      <div id="comparison" hidden><div class="preview-grid"><figure><figcaption><span>Original</span><small>Colour source</small></figcaption><div class="image-well original-well"><img id="original" alt="Original selected page or image"></div></figure><figure><figcaption><span>Prepared</span><small id="prepared-label">Monochrome</small></figcaption><div class="image-well" id="output-well"><img id="prepared" alt="Prepared monochrome page, the image passed into the print driver"></div></figure></div>
         <div class="metrics"><div><span>Output size</span><strong id="dimensions">-</strong></div><div><span>Paper</span><strong id="paper-info">-</strong></div><div><span>Black coverage</span><strong id="coverage">-</strong></div></div>
+        <details id="comparison-tools"><summary>Save paper: compare a detail on one sheet</summary>
+          <p>Choose a position within the prepared page (0% = left/top, 100% = right/bottom). Three 60 mm crops compare dots at brightness 1.00 and 1.10, and threshold 170, at the same scale and printer density.</p>
+          <label>Horizontal position % <input id="detail-x" type="number" min="0" max="100" value="50"></label>
+          <label>Vertical position % <input id="detail-y" type="number" min="0" max="100" value="50"></label>
+          <button id="make-comparison" class="secondary">Preview comparison sheet</button>
+          <button id="normal-page" class="secondary">Return to full page</button>
+        </details>
         <div id="warnings" class="warnings" hidden></div>
       </div>
       <details class="export-options"><summary>Save a prepared copy</summary><div class="download-bar"><div><h3>Ready to keep?</h3><p id="download-note">Downloads become available after conversion.</p></div><div class="download-actions"><a id="download-png" class="secondary disabled" aria-disabled="true">Download PNG</a><a id="download-pdf" class="primary disabled" aria-disabled="true">Download PDF <span aria-hidden="true">↓</span></a></div></div>
-      </details><p class="print-note"><strong>Artwork preview.</strong> It shows the exported pixels. Paper, printer settings and the connection still affect the physical result.</p>
+      </details><p class="print-note"><strong>Prepared preview.</strong> It shows the image passed into the print driver. Paper, printer settings and the connection still affect the physical result.</p>
     </section>
   </div>
   <section class="panel printer-panel" aria-label="Bluetooth printer">
@@ -80,17 +87,27 @@
     <div id="printer-message" role="status" aria-live="polite">No printer operation is running.</div><div id="printer-error" role="alert" hidden></div>
     <div id="pairing-question" hidden><strong id="pairing-message"></strong><div class="printer-toolbar"><input id="pairing-value" type="password" autocomplete="off" aria-label="Printer pairing PIN or passkey"><button id="pairing-submit" class="primary">Submit PIN</button><button id="pairing-reject" class="secondary">Cancel pairing</button></div></div>
     <div class="transfer-row" id="transfer-row" hidden><progress id="transfer-progress" max="100" value="0" aria-label="Bluetooth data transfer progress"></progress><button id="cancel-printer" class="secondary">Cancel operation</button></div>
+    <div id="paper-check" class="warnings" hidden><p id="paper-check-message"></p><button id="paper-ready" class="secondary">Confirm paper is ready</button></div>
+    <p id="config-warning" class="warnings" hidden></p>
     <div id="print-outcome" hidden><strong>Check your page</strong><div class="printer-toolbar"><button data-outcome="visible" class="secondary">Printed correctly</button><button data-outcome="blank" class="secondary">Blank sheet</button><button data-outcome="no-response" class="secondary">No response</button><button data-outcome="distorted" class="secondary">Distorted print</button></div><p id="outcome-message" class="hint"></p></div>
     <div class="printer-footer"><a id="printer-diagnostics" class="quiet" href="/api/printer/diagnostics" download="thermal-prep-diagnostics.json">Download diagnostics</a><span>Driver settings, transfer progress and raw replies. Your source PDF is not included.</span></div>
   </section>
   <section class="panel printer-panel" aria-label="Application updates">
-    <details><summary>App updates · <span id="app-version">1.3.0</span></summary>
+    <details><summary>App updates · <span id="app-version">__VERSION__</span></summary>
       <p class="hint">Updates come directly from this app’s GitHub releases. No update installs until you choose it. Finish printing before updating.</p>
       <div class="printer-toolbar"><button id="check-updates" class="secondary">Check for updates</button><button id="install-update" class="primary" disabled>Update &amp; restart app</button><button id="restore-update" class="quiet" disabled>Restore previous version</button></div>
       <p id="update-message" role="status" aria-live="polite"></p><pre id="release-notes"></pre>
     </details>
   </section>
-  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v1.3.0</span></footer>
+  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v__VERSION__</span></footer>
 </main>
+<dialog id="print-review" aria-labelledby="review-title">
+  <h2 id="review-title">Check before printing</h2>
+  <img id="review-thumbnail" alt="Selected page to print" width="180">
+  <p id="review-summary"></p><p id="review-warning" class="warnings" hidden></p>
+  <label><input id="review-paper" type="checkbox"> The correct thermal paper is loaded, printing side upwards.</label>
+  <label id="review-quality-label" hidden><input id="review-quality" type="checkbox"> I inspected the detail and want to print despite the warnings.</label>
+  <div class="printer-toolbar"><button id="review-inspect" class="secondary">Inspect detail</button><button id="review-cancel" class="secondary">Cancel</button><button id="review-print">Print one sheet</button></div>
+</dialog>
 </body>
 </html>

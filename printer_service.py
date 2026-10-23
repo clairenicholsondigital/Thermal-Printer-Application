@@ -10,7 +10,8 @@ import time
 import uuid
 
 from bluetooth_link import BlueZ, Cancelled, PairingPrompt, PrinterError, RFCOMMLink, address, channel_number
-from printer_driver import find_driver, prepare_job, render_prepared_pdf, test_page
+from printer_driver import find_driver, prepare_job, test_page
+from update_manager import atomic_json, metadata
 
 DEFAULTS = {"address":"E2:BF:FB:66:30:50","channel":1,"media":101,"density":8,
             "print_mode":5,"chunk_size":256,"pause_ms":50}
@@ -36,14 +37,24 @@ class PrinterService:
         self.directory.mkdir(parents=True,exist_ok=True)
         self.config_path = Path(config_path) if config_path else Path.home()/".config/thermal-prep/printer.json"
         self.config = dict(DEFAULTS)
+        self.config_warning = None
         try:
             saved = json.loads(self.config_path.read_text())
+            if not isinstance(saved, dict):
+                raise ValueError("Settings must be an object")
             # Old versions forced density 15; start those users on the detail
             # baseline once, but retain explicitly saved quality choices later.
             version = saved.pop("settings_version", 0)
             self.config = validate_config(saved if version == 2 else {"address": saved["address"]})
-        except (OSError,ValueError,TypeError,KeyError):
+        except FileNotFoundError:
             pass
+        except (OSError,ValueError,TypeError,KeyError):
+            self.config_warning = "Saved settings could not be read. Defaults restored; verify the printer address and paper before printing."
+            if self.config_path.exists():
+                try:
+                    self.config_path.rename(self.config_path.with_name(self.config_path.name + ".invalid-" + uuid.uuid4().hex))
+                except OSError:
+                    pass
         self.lock = threading.RLock()
         self.task = None
         self.worker = None
@@ -58,6 +69,32 @@ class PrinterService:
         self.driver = find_driver()
         self.report = {}
         self.last_print = None
+        self.paper_path = self.config_path.with_name("paper-state.json")
+        self.paper_check = None
+        try:
+            saved = json.loads(self.paper_path.read_text())
+            if not isinstance(saved, dict) or saved.get("status") not in ("ready", "uncertain", "check"):
+                raise ValueError("Invalid paper state")
+            if saved["status"] != "ready":
+                if not isinstance(saved.get("task_id"),str):
+                    raise ValueError("Missing paper check identifier")
+                self.paper_check = saved
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            self.paper_check = {"status":"uncertain", "task_id":"recovery"}
+
+    def set_paper_check(self, status):
+        record = {"status":status, "task_id":self.task["id"]}
+        atomic_json(self.paper_path, record)
+        self.paper_check = record
+
+    def paper_ready(self, identifier, confirmed):
+        with self.lock:
+            if self.active() or not self.paper_check or identifier != self.paper_check["task_id"] or confirmed is not True:
+                raise PrinterError("Confirm the current paper check after printing has stopped.")
+            atomic_json(self.paper_path, {"status":"ready"})
+            self.paper_check = None
 
     def bluetooth(self):
         if self.bluez is None:
@@ -70,7 +107,7 @@ class PrinterService:
                              "discovery":self.discovery,"bluetooth_error":self.discovery_error,
                              "connection":self.link.state(),"prompt":self.prompts.public(),
                              "pairing_display":self.bluez.display if self.bluez else None,
-                             "last_print":self.last_print})
+                             "last_print":self.last_print,"paper_check":self.paper_check,"config_warning":self.config_warning})
 
     def active(self):
         with self.lock:
@@ -83,17 +120,15 @@ class PrinterService:
                 raise PrinterError("Wait for the current printer operation to finish before changing its settings.")
             old = self.config
             self.config_path.parent.mkdir(parents=True,exist_ok=True)
-            temp = self.config_path.with_suffix(".tmp")
-            temp.write_text(json.dumps(config | {"settings_version":2},indent=2)+"\n")
-            temp.chmod(0o600)
-            temp.replace(self.config_path)
+            atomic_json(self.config_path, config | {"settings_version":2})
+            self.config_warning = None
             self.config = config
             if (old["address"],old["channel"]) != (config["address"],config["channel"]):
                 self.link.disconnect()
             self.driver = find_driver()
             return self.state()
 
-    def start(self, kind, request_id, snapshot=None):
+    def start(self, kind, request_id, snapshot=None, config=None, confirmed=False, warnings_confirmed=False):
         if kind not in ("refresh","scan","pair","setup","connect","disconnect","test","print"):
             raise PrinterError("Unknown printer action.")
         if not isinstance(request_id,str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}",request_id):
@@ -105,6 +140,15 @@ class PrinterService:
                 raise PrinterError("A printer operation is already running. It will not be started twice.")
             if kind=="print" and snapshot is None:
                 raise PrinterError("Update the page preview before printing.")
+            if kind in ("print", "test"):
+                if self.paper_check:
+                    raise PrinterError("Check the previous print and confirm a fresh sheet before printing again.")
+                if confirmed is not True or config is None:
+                    raise PrinterError("Review the page and printer settings before printing.")
+                if snapshot and snapshot[1].get("warnings") and warnings_confirmed is not True:
+                    raise PrinterError("Inspect the detail and acknowledge the quality warnings before printing.")
+            if config is not None:
+                self.save(config)
             identifier = uuid.uuid4().hex
             self.task = {"id":identifier,"kind":kind,"status":"running","message":"Starting…",
                          "sent":0,"total":0,"started":time.time(),"finished":None}
@@ -176,7 +220,7 @@ class PrinterService:
                     self.discovery_error = str(exc)
             recovery = (" No automatic retry or mid-page resume. Let buffered printing finish, "
                         "power-cycle the F11, load a fresh sheet and close other printer apps "
-                        "before printing the whole page again.") if kind in ("print","test") else ""
+                        "before printing the whole page again.") if kind in ("print","test") and self.paper_check else ""
             self.finish(str(exc) + recovery,"failed")
 
     def _print(self,snapshot,config,kind):
@@ -185,18 +229,16 @@ class PrinterService:
         shutil.rmtree(job_dir,ignore_errors=True)
         job_dir.mkdir()
         with self.lock:
-            self.report = {"app_version":"1.2.1","system":platform.platform(),"config":config,"kind":kind}
+            self.report = {"app_version":metadata(Path(__file__).resolve().parent)["version"],"system":platform.platform(),"config":config,"kind":kind}
             self.last_print = None
         # Release any manually opened connection before preparing the job.
         self.link.disconnect()
         if kind == "print":
             if snapshot[1].get("dpi") != 203 or snapshot[1].get("settings",{}).get("paper") != "a4":
                 raise PrinterError("Use A4 at 203 DPI for the Rongta F11, then update the preview.")
-            snapshot = render_prepared_pdf(snapshot[2],job_dir,self.cancel_event,self.update)
         data,info = prepare_job(snapshot[0],snapshot[1],config,job_dir,self.cancel_event,self.update)
         with self.lock:
             self.report["preparation"] = info
-            self.last_print = {"task_id":self.task["id"],"kind":kind,"outcome":"unconfirmed"}
         self.update("Sending printer data over Bluetooth. Do not start another print job.",total=len(data))
         def progress(sent,total):
             self.update(f"Sending printer data: {sent:,} of {total:,} bytes.",sent=sent,total=total)
@@ -207,11 +249,16 @@ class PrinterService:
             self.link.connect(config["address"],config["channel"])
             if self.cancel_event.is_set():
                 raise Cancelled("Print cancelled. No data was sent.")
+            # Persist before the first possible byte; a crash must never permit a blind retry.
+            with self.lock:
+                self.set_paper_check("uncertain")
+                self.last_print = {"task_id":self.task["id"],"kind":kind,"outcome":"unconfirmed"}
             transfer = self.link.send(data,self.cancel_event,progress,config["chunk_size"],config["pause_ms"])
         finally:
             self.link.disconnect()
         with self.lock:
             self.report["transfer"] = transfer
+            self.set_paper_check("check")
 
     def cancel(self):
         with self.lock:
@@ -236,6 +283,8 @@ class PrinterService:
         with self.lock:
             if self.active() or not self.last_print or identifier!=self.last_print["task_id"]:
                 raise PrinterError("That print result is no longer current.")
+            if outcome != "visible":
+                self.set_paper_check("uncertain")
             self.last_print["outcome"] = outcome
             self.report["observed_result"] = deepcopy(self.last_print)
 

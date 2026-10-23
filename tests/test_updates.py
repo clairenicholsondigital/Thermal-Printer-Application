@@ -29,7 +29,8 @@ def package(number='1.3.1',extra=None):
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)/'thermal-prep';self.root.mkdir()
-        (self.root/'release.json').write_bytes((ROOT/'release.json').read_bytes())
+        meta=json.loads((ROOT/'release.json').read_text());meta['version']='1.3.0'
+        (self.root/'release.json').write_text(json.dumps(meta))
         (self.root/'drivers').mkdir();(self.root/'drivers/F11.ppd').write_text('existing driver')
         self.state=self.root.parent/'.thermal-prep-updates';self.state.mkdir()
     def tearDown(self):self.temp.cleanup()

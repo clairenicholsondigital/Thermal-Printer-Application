@@ -41,9 +41,50 @@ def metadata(root):
     return data
 
 
-def atomic_json(path,data):
+def sync_dir(path):
+    descriptor=os.open(path,os.O_RDONLY | os.O_DIRECTORY)
+    try:os.fsync(descriptor)
+    finally:os.close(descriptor)
+
+
+def sync_tree(root):
+    root=Path(root)
+    for path in root.rglob('*'):
+        if path.is_file():
+            with path.open('rb') as stream:os.fsync(stream.fileno())
+    for path in sorted((p for p in root.rglob('*') if p.is_dir()),key=lambda p:len(p.parts),reverse=True):
+        sync_dir(path)
+    sync_dir(root)
+    sync_dir(root.parent)
+
+
+def atomic_bytes(path,data):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temp=path.with_suffix('.tmp');temp.write_text(json.dumps(data));temp.replace(path)
+    descriptor,name=tempfile.mkstemp(prefix='.'+path.name,dir=path.parent)
+    temp=Path(name)
+    try:
+        with os.fdopen(descriptor,'wb') as stream:
+            stream.write(data);stream.flush();os.fsync(stream.fileno())
+        temp.replace(path)
+        sync_dir(path.parent)
+        sync_dir(path.parent.parent)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def atomic_json(path,data):
+    atomic_bytes(path,json.dumps(data).encode())
+
+
+def durable_move(source,target):
+    source=Path(source);target=Path(target)
+    source.rename(target)
+    sync_dir(source.parent)
+    if target.parent!=source.parent:sync_dir(target.parent)
+
+
+def durable_unlink(path):
+    path=Path(path);path.unlink(missing_ok=True);sync_dir(path.parent)
 
 
 def download(url,limit=LIMIT):
@@ -92,6 +133,7 @@ def stage(root,release):
         # Syntax-check without executing downloaded modules.
         for file in folder.glob('*.py'):compile(file.read_bytes(),str(file),'exec')
         if (root/'drivers').exists():shutil.copytree(root/'drivers',folder/'drivers')
+        sync_tree(folder)
         return folder
     except Exception:
         shutil.rmtree(folder,ignore_errors=True);raise
@@ -106,6 +148,13 @@ class Updates:
         self.enabled=(os.environ.get('THERMAL_MANAGED')=='1' and
                       self.root==Path.home()/'.local/share/thermal-prep' and
                       platform.machine().lower() in ('aarch64','arm64') and not server.preview)
+        # Older installations keep the supervisor outside the versioned app folder.
+        # Replace its file atomically, but do not pretend a running old process changed.
+        self.restart_required=self.enabled and os.environ.get('THERMAL_DURABLE_SUPERVISOR')!='1'
+        if self.restart_required:
+            atomic_bytes(self.root.parent/'thermal-prep-manager.py',(self.root/'update_manager.py').read_bytes())
+            self.enabled=False
+            self.state={'status':'idle','message':'Restart the Pi once to activate safer updates. Your documents and printer settings are retained.'}
         receipt=self.state_dir/'result.json'
         if self.enabled and receipt.exists():
             try:self.state=json.loads(receipt.read_text())
@@ -114,7 +163,7 @@ class Updates:
     def public(self):
         with self.lock:
             return {**self.state,'current':metadata(self.root)['version'],'enabled':self.enabled,
-                    'available':self.release,'can_restore':self.enabled and (self.state_dir/'previous').is_dir()}
+                    'restart_required':self.restart_required,'available':self.release,'can_restore':self.enabled and (self.state_dir/'previous').is_dir()}
 
     def start(self,action):
         if action not in ('check','install','restore'):raise ValueError('Unknown update action.')
@@ -154,9 +203,11 @@ def switch(root,candidate):
     """Keep a recovery journal until the new process passes its health check."""
     root=Path(root);state=root.parent/'.thermal-prep-updates';old=state/'recover'
     if old.exists():raise ValueError('An earlier update needs recovery.')
+    sync_tree(candidate)
+    sync_tree(root)
     atomic_json(state/'journal.json',{'candidate':candidate.name})
-    root.rename(old)
-    candidate.rename(root)
+    durable_move(root,old)
+    durable_move(candidate,root)
 
 
 def recover(root):
@@ -165,9 +216,9 @@ def recover(root):
         old=state/'recover'
         if old.exists():
             if root.exists():shutil.rmtree(root)
-            old.rename(root)
-        (state/'journal.json').unlink()
-        (state/'pending.json').unlink(missing_ok=True)
+            durable_move(old,root)
+        durable_unlink(state/'journal.json')
+        durable_unlink(state/'pending.json')
         atomic_json(state/'result.json',{'status':'failed','message':'The update could not start. The previous app was restored.'})
 
 
@@ -200,10 +251,10 @@ def apply_pending(root):
         candidate=state/name
         if metadata(candidate)['version']!=request['version']:raise ValueError('Staged update changed.')
         switch(root,candidate)
-        pending.unlink()
+        durable_unlink(pending)
     except Exception:
         recover(root)
-        pending.unlink(missing_ok=True)
+        durable_unlink(pending)
         atomic_json(state/'result.json',{'status':'failed','message':'The update could not be installed. The previous app was retained.'})
 
 
@@ -215,13 +266,13 @@ def supervise(root):
         recover(root)
         while True:
             apply_pending(root)
-            process=subprocess.Popen([sys.executable,str(root/'app.py')],cwd=root,env={**os.environ,'THERMAL_MANAGED':'1'})
+            process=subprocess.Popen([sys.executable,str(root/'app.py')],cwd=root,env={**os.environ,'THERMAL_MANAGED':'1','THERMAL_DURABLE_SUPERVISOR':'1'})
             if (state/'journal.json').exists():
                 if healthy(metadata(root)['version']):
                     previous=state/'previous'
                     if previous.exists():shutil.rmtree(previous)
-                    (state/'recover').rename(previous)
-                    (state/'journal.json').unlink()
+                    durable_move(state/'recover',previous)
+                    durable_unlink(state/'journal.json')
                     atomic_json(state/'result.json',{'status':'done','message':'App updated successfully. Reopen your document to print.'})
                 else:
                     process.terminate()

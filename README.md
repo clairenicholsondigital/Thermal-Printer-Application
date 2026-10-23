@@ -1,4 +1,4 @@
-# Thermal Prep 1.3.0
+# Thermal Prep 1.3.1
 
 A local PDF/image preparation and experimental Rongta F11 Bluetooth printing app for a Raspberry Pi 5 running **Raspberry Pi OS 64-bit with a desktop**. Upload a PDF, JPG or PNG, inspect the automatically prepared preview, connect the F11, then print one page. PNG and PDF downloads remain available.
 
@@ -10,7 +10,7 @@ Version 1.2.1 separates print quality from Bluetooth delivery. Start with **dens
 
 This app targets **Raspberry Pi 5 with 64-bit Raspberry Pi OS and a desktop**. GitHub hosts the source and update packages. The Pi needs internet only when checking/downloading updates; no VPS, update server, GitHub account or token is required for this public repository.
 
-### One-time setup or upgrade to version 1.3.0
+### One-time setup or upgrade to version 1.3.1
 
 Download `thermal-prep-pi64.zip` from the [latest GitHub release](https://github.com/clairenicholsondigital/Thermal-Printer-Application/releases/latest), extract it into a folder, open a terminal there and run:
 
@@ -72,12 +72,12 @@ The default address is `E2:BF:FB:66:30:50`. **Print quality, paper & setup** con
 2. Start with **Detailed diagram**, **A4**, **203 DPI**, **Automatic best fit** and **Remove white margins**. The initial preview is automatic.
 3. Compare the original and prepared image. Use **1:1 pixels** or **2×** to inspect fine detail and scroll within the image. These are screen-pixel zoom modes, not physical-size measurements.
 4. Open **Adjust the result** if needed; changes apply automatically. Printing and downloading the page are disabled while its settings are awaiting conversion. Blank previews are blocked from printing. The app uses A4 at the F11’s native 203 DPI.
-5. With A4 paper loaded, choose **Print this page**. The server snapshots the current prepared PDF and preview metadata before starting. A later upload or conversion cannot change that in-progress print.
+5. With A4 paper loaded, choose **Print this page**. Review the filename, page thumbnail, orientation, paper and density, then confirm the loaded paper. The server atomically captures the cached preview and the printer settings you approved. A later upload or conversion cannot change that in-progress print.
 6. Check the actual paper. A transfer completion is not a printer acknowledgement or a claim about print quality.
 
 A4 uses the driver’s genuine `A4` option. Landscape artwork is rotated to pass through the portrait-width print head; it does not request a wider landscape sheet.
 
-The browser displays the exact exported PNG; the downloadable PDF embeds those same monochrome pixels losslessly. The printer path renders page 1 of that single-page PDF at 203 DPI and converts it to monochrome, exactly as the working script does, then passes it through CUPS and the vendor filter. Those stages may resample or process the pixels. The checked CUPS build rounded A4's native raster to 1677 × 2373, while the exported PNG is 1678 × 2374. The screen preview is therefore an artwork preview, not a device-raster or physical print guarantee.
+The browser displays the cached PNG produced by rendering the prepared PDF at 203 DPI and converting it to monochrome, matching the working script. Printing passes those exact cached bytes into the driver without another PDF render. The PNG download contains those final pixels; the PDF download is the single-page source used to prepare them. CUPS and the vendor filter can still resample artwork, so the preview cannot guarantee physical dot identity.
 
 ## Image controls
 
@@ -102,7 +102,7 @@ Driver options are checked against the F11 PPD. The quality baseline uses densit
 
 Only one printer operation runs at once. Every action has an identifier to prevent the same request being sent twice. The app never automatically retries an interrupted print. If a browser request fails after a click, check the status and paper before clicking again.
 
-**Cancel operation** stops preparation or closes the sending socket. Bytes already buffered by the printer may still print. Cancellation cannot retract them. After an interrupted job, let buffered printing finish, power-cycle the F11, load fresh paper and close other printer apps before explicitly printing the whole page again. A single job has a five-minute transfer limit; each preparation stage has a 90-second limit.
+**Cancel operation** stops preparation or closes the sending socket. Bytes already buffered by the printer may still print. Cancellation cannot retract them. After an interrupted job, let buffered printing finish, power-cycle the F11, load fresh paper and close other printer apps before explicitly printing the whole page again. The transfer budget scales with job size and pacing, with a separate 30-second no-progress timeout. Partial socket writes do not add extra pacing delays. Preparation stages retain bounded timeouts.
 
 ## If something fails
 
@@ -185,3 +185,13 @@ Sources accompanying the supplied research: [Rongta F11 support](https://rongtag
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+## Paper-saving safeguards (1.3.1)
+
+After every transmission, the app blocks another print until you check the paper and confirm the next sheet is ready. Interrupted or uncertain transmissions require allowing buffered printing to finish, switching the F11 off and on, and loading a fresh sheet. This requirement survives reconnecting, refreshing and restarting the app. Failures before transmission do not require replacing paper. Cancel remains available during image preparation; no operation automatically retries a print.
+
+Sparse/heavy coverage warnings must be acknowledged in the final print check. Choose **Inspect detail** to return to a 2× preview, or explicitly acknowledge the warnings to print. **Save paper: compare a detail on one sheet** makes three 60 mm crops of the selected page position at the same scale, comparing dithering at brightness 1.00 and 1.10 with threshold 170. It uses one printer density and never automatically starts printing. Return to the full page after choosing your settings.
+
+Malformed preference files are preserved as `printer.json.invalid-*` alongside the settings file. The app starts with defaults and shows a warning to verify the address and paper. Print diagnostics read the current release version.
+
+Updates now flush staged files, the recovery journal and folder changes to storage before proceeding. Existing installations using the older supervisor receive its replacement automatically when this app starts and must restart the Pi once to activate it; further in-app installs are blocked until then. Fresh installs use the new supervisor immediately. This reduces power-loss risk but is not protection against failing storage hardware. Routine updates still need only GitHub, with no VPS service.

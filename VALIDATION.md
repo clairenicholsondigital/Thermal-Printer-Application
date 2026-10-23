@@ -1,3 +1,11 @@
+# Version 1.3.1 safety review fixes
+
+58 automated tests passed. New regression checks cover cancellation during conversion without bypassing authentication; atomic print settings and mandatory preflight/quality acknowledgments; blocking repeated prints after a successful transfer; recovery guards surviving reconnects and restarts; distinguishing preparation failures from uncertain transmissions; corrupt settings preservation; native-scale comparison crops; transfers longer than five minutes with partial socket writes; stalled transfers; durable journal writes; and migration of the older updater supervisor. The final cached preview is checked against real Poppler output and passed unchanged into preparation.
+
+A Chromium walkthrough passed upload, automatic conversion, adjustment, one-sheet comparison generation, mandatory paper confirmation, one explicit simulated print, blocking the next print until fresh-paper confirmation, and desktop/mobile layouts without JavaScript errors. The real-process updater check passed startup, install, app restart, deliberate startup failure and automatic rollback/restart. JavaScript syntax and whitespace checks passed.
+
+Bluetooth and driver output were simulated. No physical printer was contacted. Raspberry Pi/F11 radio reliability, loose-sheet feeding and actual print quality still need hardware validation. CUPS/vendor processing can still resample the cached driver-input image. Disk synchronization reduces update interruption risk but cannot guarantee recovery from storage failure. Existing installations with the old supervisor need the one-time Pi restart shown by the app after upgrading.
+
 # Version 1.3.0 update validation
 
 48 automated tests passed, including checksum rejection, unexpected/path-traversal archive entries, incompatible dependencies, preserved driver files, successful update/manual restore, interrupted folder-switch recovery, failed-start rollback, protected update endpoints and blocking updates during printer/conversion operations. Existing conversion and printing tests also passed.

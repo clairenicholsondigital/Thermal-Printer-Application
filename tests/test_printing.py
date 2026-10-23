@@ -103,8 +103,6 @@ class ServiceTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.link=FakeLink()
         self.service=PrinterService(self.root/'jobs',config_path=self.root/'config.json',link=self.link)
         self.snapshot=(b'preview',{'dpi':203,'settings':{'paper':'a4'}},b'pdf')
-        render=patch('printer_service.render_prepared_pdf',return_value=self.snapshot[:2])
-        self.render=render.start();self.addCleanup(render.stop)
     def tearDown(self):self.service.close();self.tmp.cleanup()
     def wait(self):
         self.service.worker.join(4);self.assertFalse(self.service.worker.is_alive())
@@ -134,7 +132,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_connection_failure_closes_without_sending_or_retry(self):
         with patch('printer_service.prepare_job',return_value=(b'raw',{})), patch.object(self.link,'connect',side_effect=PrinterError('offline')) as connect:
-            self.service.start('print','a'*32,self.snapshot);self.wait()
+            self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True);self.wait()
         connect.assert_called_once()
         self.assertFalse(self.link.connected)
         self.assertEqual(self.link.sent,[])
@@ -149,7 +147,7 @@ class ServiceTests(unittest.TestCase):
             return b'raw',{}
         with patch('printer_service.prepare_job',side_effect=prepare):
             self.link.release.set()
-            self.service.start('print','a'*32,self.snapshot);self.wait()
+            self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True);self.wait()
         self.assertEqual(self.link.sent,[b'raw'])
         self.assertFalse(self.link.connected)
 
@@ -168,38 +166,39 @@ class ServiceTests(unittest.TestCase):
 
     def test_duplicate_request_sends_once_and_outcome_is_explicit(self):
         with patch('printer_service.prepare_job',return_value=(b'raw-packet',{'test':True})):
-            result=self.service.start('print','a'*32,self.snapshot);self.assertTrue(self.link.entered.wait(2))
-            duplicate=self.service.start('print','a'*32,self.snapshot)
+            result=self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True);self.assertTrue(self.link.entered.wait(2))
+            duplicate=self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True)
             self.assertTrue(duplicate['duplicate']);self.assertEqual(result['task_id'],duplicate['task_id'])
-            with self.assertRaises(PrinterError):self.service.start('print','b'*32,self.snapshot)
+            with self.assertRaises(PrinterError):self.service.start('print','b'*32,self.snapshot,config=DEFAULTS,confirmed=True)
             with self.assertRaises(PrinterError):self.service.save(DEFAULTS)
             self.link.release.set();self.wait()
         self.assertEqual(self.link.sent,[b'raw-packet']);state=self.service.state()
         self.assertEqual(self.link.send_settings,[(256,50)])
         self.assertEqual(self.link.connections,[(DEFAULTS['address'],1)])
         self.assertFalse(self.link.connected)
-        self.render.assert_called_once()
+        self.assertEqual(self.service.report["app_version"], __import__("app").APP_VERSION)
         self.assertEqual(state['task']['status'],'sent');self.assertEqual(state['last_print']['outcome'],'unconfirmed')
         self.service.outcome(result['task_id'],'blank')
         self.assertEqual(self.service.diagnostics()['observed_result']['outcome'],'blank')
-        self.assertTrue(self.service.start('print','a'*32,self.snapshot)['duplicate'])
+        self.assertTrue(self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True)['duplicate'])
         self.assertEqual(len(self.link.sent),1)
 
     def test_driver_failure_sends_nothing(self):
         with patch('printer_service.prepare_job',side_effect=PrinterError('bad driver')):
-            self.service.start('print','a'*32,self.snapshot);self.wait()
+            self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True);self.wait()
         self.assertEqual(self.service.state()['task']['status'],'failed')
         self.assertEqual(self.link.sent,[]);self.assertIsNone(self.service.state()['last_print'])
 
     def test_cancellation_and_fresh_connection_on_next_print(self):
         with patch('printer_service.prepare_job',return_value=(b'raw',{})):
-            self.service.start('print','a'*32,self.snapshot);self.assertTrue(self.link.entered.wait(2))
+            self.service.start('print','a'*32,self.snapshot,config=DEFAULTS,confirmed=True);self.assertTrue(self.link.entered.wait(2))
             self.service.cancel();self.wait()
         self.assertEqual(self.service.state()['task']['status'],'cancelled');self.assertEqual(self.link.sent,[])
         self.assertFalse(self.link.connected)
         with patch('printer_service.prepare_job',return_value=(b'next',{})):
             self.link.release.set()
-            self.service.start('test','b'*32);self.wait()
+            self.service.paper_ready(self.service.paper_check['task_id'],True)
+            self.service.start('test','b'*32,config=DEFAULTS,confirmed=True);self.wait()
         self.assertEqual(self.link.sent,[b'next'])
         self.assertEqual(len(self.link.connections),2)
         self.assertFalse(self.link.connected)

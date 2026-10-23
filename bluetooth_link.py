@@ -364,13 +364,19 @@ class RFCOMMLink:
         if sock is None:
             raise PrinterError("Connect to the printer before printing.")
         offset = 0
-        deadline = time.monotonic() + 300
+        # Pause once per complete chunk, even when the socket accepts partial writes.
+        chunks = (len(data) + chunk_size - 1) // chunk_size
+        deadline = time.monotonic() + max(300, chunks * pause_ms / 1000 * 4 + 120)
+        last_progress = time.monotonic()
+        chunk_end = min(chunk_size, len(data))
         try:
             while offset < len(data):
                 if cancel.is_set():
                     raise Cancelled("Transfer cancelled. Data already buffered by the printer may still print.")
                 if time.monotonic() > deadline:
                     raise PrinterError("Transfer timed out. A partial job may have reached the printer. It will not be retried automatically.")
+                if time.monotonic() - last_progress > 30:
+                    raise PrinterError("Transfer stalled for 30 seconds. Check the paper before retrying.")
                 with self.lock:
                     if self.sock is not sock:
                         raise PrinterError("The printer disconnected during transfer. The job will not be retried automatically.")
@@ -378,15 +384,18 @@ class RFCOMMLink:
                 if not writable:
                     continue
                 try:
-                    count = sock.send(data[offset:offset+chunk_size])
+                    count = sock.send(data[offset:chunk_end])
                 except BlockingIOError:
                     continue
                 if count == 0:
                     raise PrinterError("The connection closed during transfer.")
                 offset += count
+                last_progress = time.monotonic()
                 progress(offset, len(data))
-                if cancel.wait(pause_ms / 1000):
-                    raise Cancelled("Transfer cancelled. Buffered data may still print.")
+                if offset == chunk_end:
+                    chunk_end = min(offset + chunk_size, len(data))
+                    if cancel.wait(pause_ms / 1000):
+                        raise Cancelled("Transfer cancelled. Buffered data may still print.")
             # Receive diagnostics for two seconds; their meaning is not guessed.
             if cancel.wait(2):
                 raise Cancelled("Transfer stopped after sending. The printer may still finish its buffered page.")

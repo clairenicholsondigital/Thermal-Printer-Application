@@ -1,6 +1,8 @@
 """Local, deterministic PDF to monochrome artwork conversion."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+import io
+import threading
 import json
 import math
 import os
@@ -8,7 +10,7 @@ import re
 import subprocess
 import warnings
 
-from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import ImageFont, ImageDraw, Image, ImageChops, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
@@ -209,10 +211,43 @@ def prepare_image(original, settings):
                   "warnings": warnings, "settings": asdict(settings)}
 
 
-def export_result(original, settings, directory):
+def comparison_page(original, settings, selection):
+    """Three native-resolution crops, never resized after monochrome conversion."""
+    if not isinstance(selection, dict) or set(selection) != {"x", "y"}:
+        raise ConversionError("Choose a detail position on the page.")
+    if any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 100 for v in selection.values()):
+        raise ConversionError("Detail positions must be between 0 and 100 percent.")
+    base, source_meta = prepare_image(original, settings)
+    side = round(60 / 25.4 * 203)
+    left = round((base.width-side)*selection["x"]/100)
+    top = round((base.height-side)*selection["y"]/100)
+    sheet = Image.new("1", (1678,2374), 1)
+    draw = ImageDraw.Draw(sheet)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 24)
+    except OSError:
+        font = ImageFont.load_default()
+    draw.text((64,64), "Detail comparison: 60 mm crops, same scale, one density.", fill=0,font=font)
+    variants = [("Dither / brightness 1.00", "dither",1.0),
+                ("Dither / brightness 1.10", "dither",1.1),
+                ("Threshold 170 / brightness 1.00", "threshold",1.0)]
+    for i,(label,mode,brightness) in enumerate(variants):
+        mono,_ = prepare_image(original, replace(settings,mode=mode,brightness=brightness,threshold=170))
+        y = 150 + i*680
+        draw.text((64,y),label,fill=0,font=font)
+        sheet.paste(mono.crop((left,top,left+side,top+side)),(64,y+40))
+    meta = dict(source_meta, width=1678,height=2374,paper_mm=[210,297],orientation="portrait",
+                comparison={"selection":selection,"crop_pixels":[left,top,side,side],"size_mm":60},
+                warnings=source_meta["warnings"])
+    return sheet,meta
+
+
+def export_result(original, settings, directory, comparison=None):
+    if settings.dpi != 203 or settings.paper != "a4":
+        raise ConversionError("Prepare A4 at 203 DPI for the Rongta F11.")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    mono, metadata = prepare_image(original, settings)
+    mono, metadata = comparison_page(original, settings, comparison) if comparison is not None else prepare_image(original, settings)
     mono.save(directory / "thermal.png", dpi=(settings.dpi, settings.dpi), optimize=True)
     # Flate compression of pixel data. No JPEG encoding and no second conversion.
     w, h = [mm / 25.4 * 72 for mm in metadata["paper_mm"]]
@@ -222,6 +257,16 @@ def export_result(original, settings, directory):
     pdf.drawImage(ImageReader(mono), 0, 0, width=w, height=h)
     pdf.showPage()
     pdf.save()
+    # Match the successful Pi script BEFORE approval. Printing consumes these cached bytes.
+    from printer_driver import render_prepared_pdf
+    final_png, _ = render_prepared_pdf((directory / "thermal.pdf").read_bytes(), directory,
+                                      threading.Event(), lambda message: None)
+    (directory / "thermal.png").write_bytes(final_png)
+    with Image.open(io.BytesIO(final_png)) as final:
+        metadata.update(width=final.width, height=final.height,
+                        black_pixels=final.convert("L").histogram()[0])
+        metadata["coverage"] = round(100*metadata["black_pixels"]/(final.width*final.height),3)
+    metadata["preview_stage"] = "driver-input"
     preview = original.copy()
     preview.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
     preview.save(directory / "original.png")
