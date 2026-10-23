@@ -33,10 +33,14 @@ def main():
     target = Path.home() / ".local/share/thermal-prep"
     target.mkdir(parents=True, exist_ok=True)
     if target != source:
-        for name in ("app.py", "converter.py", "launch.py", "README.md", "bluetooth_link.py", "printer_driver.py", "printer_service.py", "VALIDATION.md"):
+        for name in ("app.py", "converter.py", "launch.py", "README.md", "bluetooth_link.py", "printer_driver.py", "printer_service.py", "VALIDATION.md", "update_manager.py", "release.json"):
             shutil.copy2(source / name, target / name)
         shutil.copytree(source / "static", target / "static", dirs_exist_ok=True)
-    if not args.skip_driver:
+    # Stable launcher and recovery manager remain accessible while app folders switch.
+    shutil.copy2(source / "launch.py", target.parent / "thermal-prep-launch.py")
+    shutil.copy2(source / "update_manager.py", target.parent / "thermal-prep-manager.py")
+    driver_present = all((target / "drivers" / name).is_file() for name in ("F11.ppd","rastertoRtPortable"))
+    if not args.skip_driver and (args.driver_archive or not driver_present):
         print("Installing the checked Rongta F11 driver for this user…",flush=True)
         try:
             install_driver(target,args.driver_archive)
@@ -49,7 +53,7 @@ def main():
     desktop = applications / "thermal-prep.desktop"
     desktop.write_text("[Desktop Entry]\nVersion=1.0\nType=Application\nName=Thermal Prep\n"
                        "Comment=Prepare and preview PDFs for a monochrome thermal printer\n"
-                       f"Exec=/usr/bin/python3 {desktop_quote(target / 'launch.py')}\n"
+                       f"Exec=/usr/bin/python3 {desktop_quote(target.parent / 'thermal-prep-launch.py')}\n"
                        "Icon=document-print-preview\nTerminal=false\nCategories=Utility;Graphics;\n")
     desktop.chmod(0o755)
     if shutil.which("update-desktop-database"):

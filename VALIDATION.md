@@ -1,3 +1,11 @@
+# Version 1.3.0 update validation
+
+48 automated tests passed, including checksum rejection, unexpected/path-traversal archive entries, incompatible dependencies, preserved driver files, successful update/manual restore, interrupted folder-switch recovery, failed-start rollback, protected update endpoints and blocking updates during printer/conversion operations. Existing conversion and printing tests also passed.
+
+A separate real-process integration check ran temporary copies of the actual application: initial startup, switching to a newer version, app-only restart, a deliberately broken next version, and automatic restoration/restart of the preceding version all passed. These checks used the VPS, not Raspberry Pi hardware. No real printer was contacted. The browser walkthrough also passed update checking/release-note rendering, disabled installation outside a managed Pi installation, and the existing upload-to-print flow without JavaScript errors.
+
+The application is enabled for routine installation only under the installed per-user launcher on ARM64. GitHub release retrieval and download verification are checked separately when publishing this release. The initial installer still requires a one-time run on the Pi; no update can retrofit itself into an older app without that step.
+
 # Version 1.2.1 validation
 
 All 36 automated tests passed. Added regression coverage for upgrading the former fixed-density settings once, persisting explicit density/media choices across restarts, and retaining 256-byte/50 ms delivery while rejecting unsupported settings.

@@ -5,7 +5,7 @@
   <meta name="thermal-token" content="__TOKEN__">
   <meta name="description" content="Prepare PDFs and images for a monochrome thermal printer, locally on your Raspberry Pi.">
   <title>Thermal Prep</title>
-  <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script><script src="/static/printer.js" defer></script>
+  <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script><script src="/static/printer.js" defer></script><script src="/static/updates.js" defer></script>
 </head>
 <body>
 <header class="topbar"><div class="brand"><span class="brand-icon" aria-hidden="true">▤</span><div>Thermal Prep<small>PDF or image → paper</small></div></div><span class="local"><span></span>Runs on your Pi</span></header>
@@ -83,7 +83,14 @@
     <div id="print-outcome" hidden><strong>Check your page</strong><div class="printer-toolbar"><button data-outcome="visible" class="secondary">Printed correctly</button><button data-outcome="blank" class="secondary">Blank sheet</button><button data-outcome="no-response" class="secondary">No response</button><button data-outcome="distorted" class="secondary">Distorted print</button></div><p id="outcome-message" class="hint"></p></div>
     <div class="printer-footer"><a id="printer-diagnostics" class="quiet" href="/api/printer/diagnostics" download="thermal-prep-diagnostics.json">Download diagnostics</a><span>Driver settings, transfer progress and raw replies. Your source PDF is not included.</span></div>
   </section>
-  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v1.2.1</span></footer>
+  <section class="panel printer-panel" aria-label="Application updates">
+    <details><summary>App updates · <span id="app-version">1.3.0</span></summary>
+      <p class="hint">Updates come directly from this app’s GitHub releases. No update installs until you choose it. Finish printing before updating.</p>
+      <div class="printer-toolbar"><button id="check-updates" class="secondary">Check for updates</button><button id="install-update" class="primary" disabled>Update &amp; restart app</button><button id="restore-update" class="quiet" disabled>Restore previous version</button></div>
+      <p id="update-message" role="status" aria-live="polite"></p><pre id="release-notes"></pre>
+    </details>
+  </section>
+  <footer><span>Files stay on this device. Use × beside the filename to clear the document and its previews.</span><span>Thermal Prep · v1.3.0</span></footer>
 </main>
 </body>
 </html>

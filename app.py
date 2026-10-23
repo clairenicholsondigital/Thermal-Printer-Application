@@ -18,8 +18,10 @@ from PIL import Image
 from bluetooth_link import PrinterError
 from printer_driver import test_page
 from printer_service import PrinterService
+from update_manager import Updates, metadata
 
 ROOT = Path(__file__).resolve().parent
+APP_VERSION = metadata(ROOT)["version"]
 MAX_UPLOAD = 25 * 1024 * 1024
 
 
@@ -31,8 +33,12 @@ class LocalServer(ThreadingHTTPServer):
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.Lock()
         self.temp = tempfile.TemporaryDirectory(prefix="thermal-prep-")
+        self.updating = False
+        self.operation_gate = threading.Lock()
+        self.instance = uuid.uuid4().hex
         self.job = None
         self.printer = PrinterService(Path(self.temp.name) / "printer")
+        self.updates = Updates(self, ROOT)
 
     def server_close(self):
         super().server_close()
@@ -101,12 +107,14 @@ class Handler(BaseHTTPRequestHandler):
             html = (ROOT / "static/index.html").read_text().replace("__TOKEN__", self.server.token)
             return self.send_bytes(html.encode(), "text/html; charset=utf-8", cookie=True)
         if path == "/health":
-            return self.json_response({"app": "thermal-prep", "version": "1.2.1"})
-        if path in ("/static/app.js", "/static/printer.js", "/static/style.css"):
+            return self.json_response({"app": "thermal-prep", "version": APP_VERSION, "instance": self.server.instance})
+        if path in ("/static/app.js", "/static/printer.js", "/static/style.css", "/static/updates.js"):
             file = ROOT / path.lstrip("/")
             return self.send_bytes(file.read_bytes(), mimetypes.guess_type(str(file))[0])
         if not self.authorised():
             return
+        if path == "/api/updates/status":
+            return self.json_response(self.server.updates.public())
         if path == "/api/printer/status":
             return self.json_response(self.server.printer.state())
         if path == "/api/printer/diagnostics":
@@ -144,7 +152,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorised(mutate=True):
             return
+        if not self.server.operation_gate.acquire(blocking=False):
+            return self.error("Another operation is running. Wait for it to finish.",409)
+        try:
+            if self.server.updating:
+                return self.error("The app is updating. Please wait for it to reopen.",409)
+            return self.handle_post()
+        finally:
+            self.server.operation_gate.release()
+
+    def handle_post(self):
         path = urlsplit(self.path).path
+        if path == "/api/updates/action":
+            try:
+                data=json.loads(self.read_body(1024))
+                if not isinstance(data,dict):raise ValueError("Invalid update request.")
+                return self.json_response(self.server.updates.start(data.get("action")),202)
+            except (ValueError,TypeError) as exc:
+                return self.error(str(exc))
         if path.startswith("/api/printer/"):
             return self.printer_request(path)
         if path not in ("/api/upload", "/api/convert", "/api/reset"):

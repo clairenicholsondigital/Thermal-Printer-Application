@@ -1,4 +1,4 @@
-# Thermal Prep 1.2.1
+# Thermal Prep 1.3.0
 
 A local PDF/image preparation and experimental Rongta F11 Bluetooth printing app for a Raspberry Pi 5 running **Raspberry Pi OS 64-bit with a desktop**. Upload a PDF, JPG or PNG, inspect the automatically prepared preview, connect the F11, then print one page. PNG and PDF downloads remain available.
 
@@ -6,40 +6,54 @@ A local PDF/image preparation and experimental Rongta F11 Bluetooth printing app
 
 Version 1.2.1 separates print quality from Bluetooth delivery. Start with **density 8**, A4, driver mode 5 and the paper-feed setting matching your paper. Density 1 or 15 can be selected under **Print quality, paper & setup**. The working terminal script still uses density 15. Old unversioned preferences migrate once to the moderate-density baseline; newly saved density and paper choices survive restarts. The single-page CUPS check remains. “Data sent” is not a physical-print acknowledgement. Mid-page resume is not supported.
 
-## Install or update
+## Install once, then update in the app
 
-Clone this repository (or extract its ZIP), open a terminal in the folder containing `install.sh`, and run:
+This app targets **Raspberry Pi 5 with 64-bit Raspberry Pi OS and a desktop**. GitHub hosts the source and update packages. The Pi needs internet only when checking/downloading updates; no VPS, update server, GitHub account or token is required for this public repository.
+
+### One-time setup or upgrade to version 1.3.0
+
+Download `thermal-prep-pi64.zip` from the [latest GitHub release](https://github.com/clairenicholsondigital/Thermal-Printer-Application/releases/latest), extract it into a folder, open a terminal there and run:
 
 ```bash
 bash install.sh
 ```
 
-Run it as your **normal desktop user**, without putting `sudo` before the command. It requests sudo for Debian packages and enabling the Bluetooth service. Internet is required during installation. Allow time for the packages to download.
+Run as your normal Pi desktop user, without `sudo` before the command. The installer requests sudo for system dependencies and Bluetooth setup. It keeps existing app-local F11 driver files; `--skip-driver` also preserves a previously installed system driver. `--driver-archive /path/to/archive.zip` explicitly replaces the driver using the checked vendor archive.
 
-The installer:
+This installs the new update-capable launcher and the app under `~/.local/share`. Existing printer preferences and BlueZ pairing remain in place. If an older app is still running, close that process or restart the Pi **once** after this transition installation. Open **Thermal Prep** from the applications menu. Subsequent routine updates do not need a reboot or administrator password.
 
-- Installs Python, Pillow, ReportLab, Poppler, BlueZ, Python D-Bus/GLib, CUPS filters and the CUPS image library. It handles the `libcupsimage2` / `libcupsimage2t64` package-name difference.
-- Copies the app to `~/.local/share/thermal-prep` and adds a **Thermal Prep** applications-menu entry.
-- Downloads the checked official Rongta driver archive, verifies its SHA-256, and installs only its F11 PPD and ARM64 filter in the app's `drivers` folder. Vendor binaries are not included in this source ZIP.
-- Keeps the app running as your desktop user. It does not create a CUPS printer queue or send a print during installation.
+### Routine updates
 
-**If an older version is already running, restart the Pi once after installation.** Closing its browser tab alone does not stop the old server. The launcher detects an old running version and asks you to restart.
+1. Finish any print, conversion or pairing operation.
+2. Open **App updates** and click **Check for updates**.
+3. Read the release notes and choose **Update & restart app**.
+4. Confirm that the current document can be closed. Save a prepared download first if wanted.
+5. The app verifies the GitHub download, installs it separately, restarts itself and reloads the browser. Reopen the document you want to print.
 
-Open **Thermal Prep** from your applications menu, or run:
+Only numbered, published stable releases with the `thermal-prep-pi64.zip` asset are offered. Pushing code to `main` alone does not publish an app update. Updates never install automatically, and the updater never sends a print. **Restore previous version** switches back to the retained application version; saved preferences and printer pairing stay in place.
+
+The lightweight launcher supervises the application process. A failed startup restores and restarts the previous version automatically. If power is lost during a folder switch, the stable applications-menu launcher performs recovery the next time you open the app. No permanent system service or VPS is required.
+
+The updater verifies the SHA-256 digest supplied by GitHub and rejects unexpected archive files or incompatible system-dependency requirements. This verifies integrity against the trusted GitHub repository; it is not an independent publisher signature. Future releases requiring different system packages or a changed updater protocol must use a separate installer upgrade. Routine updates preserve the existing Rongta driver.
+
+The app runs at `http://127.0.0.1:8877`. Keep it on the Pi; do not expose the development preview to a network. For manual launch, use:
 
 ```bash
-/usr/bin/python3 "$HOME/.local/share/thermal-prep/launch.py"
+/usr/bin/python3 "$HOME/.local/share/thermal-prep-launch.py"
 ```
 
-Use the browser on the Pi at <http://127.0.0.1:8877>. The installed app listens on loopback only. Conversion and Bluetooth printing work without internet once dependencies are installed. No account or subscription is needed.
+Release recovery files are under `~/.local/share/.thermal-prep-updates`. The stable launcher and manager are `~/.local/share/thermal-prep-launch.py` and `~/.local/share/thermal-prep-manager.py`. Settings remain in `~/.config/thermal-prep/printer.json`.
 
-If the automatic driver download fails, the app still installs and shows which printing dependencies are missing. Rerun the installer, or supply the same checked official archive:
+### Publishing future updates (maintainer)
+
+Update `release.json` and the displayed version, run the tests, commit and push the source, then build the update archive:
 
 ```bash
-bash install.sh --driver-archive "/path/to/a4-portable-printer-driver-linux.zip"
+python3 -m unittest discover -s tests -v
+python3 scripts/build-release.py
 ```
 
-`--skip-driver` keeps an existing driver installation and skips the vendor download; Debian package installation still runs. A changed archive is rejected rather than silently executing a different binary. The checked download URL and fingerprint are in `driver_install.py`.
+Create a GitHub release for that exact commit, with tag `v` followed by the version in `release.json`, and upload `dist/thermal-prep-pi64.zip`. Publish it as a stable release. The Pi reads GitHub’s asset digest and checks the manifest before installation. Keep `dependencies` and `updater_protocol` at 1 only while the release remains compatible with the installed runtime and bootstrap manager. Test new releases on the Pi as well as running automated checks.
 
 ## Everyday printing
 

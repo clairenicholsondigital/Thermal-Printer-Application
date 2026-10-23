@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="thermal-token"]').content;
+let appUpdating = false;
 let job = null, result = null, busy = false, dirty = false, zoom = 0, preparationTimer = null;
 const fields = ['paper','dpi','orientation','rotation','crop','margin','mode','threshold','brightness','contrast','coloured_lines','sharpen'];
 function message(text, spinning=false) { $('status').textContent=text; $('status').classList.toggle('busy',spinning); }

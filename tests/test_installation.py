@@ -21,8 +21,10 @@ class InstallationTests(unittest.TestCase):
             with patch.object(installer.os,'geteuid',return_value=1000), patch.object(installer.Path,'home',return_value=home), patch.object(installer.shutil,'which',side_effect=lambda name:'/usr/bin/'+name), patch.object(installer.subprocess,'run',side_effect=run), patch.object(installer,'install_driver') as driver, patch.object(sys,'argv',['installer.py']),redirect_stdout(io.StringIO()):
                 installer.main()
             target=home/'.local/share/thermal-prep'
-            for name in ('app.py','bluetooth_link.py','printer_driver.py','printer_service.py','static/printer.js','static/app.js','README.md'):
+            for name in ('app.py','bluetooth_link.py','printer_driver.py','printer_service.py','static/printer.js','static/app.js','static/updates.js','update_manager.py','release.json','README.md'):
                 self.assertTrue((target/name).is_file(),name)
+            self.assertTrue((target.parent/'thermal-prep-launch.py').is_file())
+            self.assertTrue((target.parent/'thermal-prep-manager.py').is_file())
             driver.assert_called_once_with(target,None)
             packages=next(args for args in calls if args[:3]==['sudo','apt-get','install'])
             for package in ('python3-dbus','python3-gi','bluez','cups','libcupsimage2t64'):

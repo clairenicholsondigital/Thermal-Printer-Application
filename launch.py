@@ -9,6 +9,9 @@ from urllib.request import build_opener, ProxyHandler
 import webbrowser
 
 ROOT = Path(__file__).resolve().parent
+if Path(__file__).name == "thermal-prep-launch.py":
+    ROOT = ROOT / "thermal-prep"
+MANAGER = ROOT.parent / "thermal-prep-manager.py"
 URL = "http://127.0.0.1:8877"
 
 
@@ -27,9 +30,12 @@ def main():
     # Serialise double-clicks to avoid starting two app processes.
     with (state / "launcher.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if MANAGER.is_file():
+            subprocess.run([sys.executable,str(MANAGER),"--recover",str(ROOT)],check=True)
+        expected = json.loads((ROOT / "release.json").read_text())["version"]
         version = ready()
-        if version and version != "1.2.1":
-            message = "An older Thermal Prep is still running. Restart the Pi once to load the Bluetooth update."
+        if version and version != expected:
+            message = "An older Thermal Prep is still running. Close the old app process or restart the Pi once to finish this initial upgrade."
             print(message,file=sys.stderr)
             try:
                 subprocess.run(["notify-send","Thermal Prep",message],check=False)
@@ -38,7 +44,8 @@ def main():
             return 1
         if not ready():
             with (state / "app.log").open("w") as log:
-                process = subprocess.Popen([sys.executable, str(ROOT / "app.py")], cwd=ROOT,
+                manager = MANAGER if MANAGER.is_file() else ROOT / "update_manager.py"
+                process = subprocess.Popen([sys.executable, str(manager), "--supervise", str(ROOT)], cwd=ROOT.parent,
                                            stdout=log, stderr=log, start_new_session=True)
             for _ in range(50):
                 if ready():

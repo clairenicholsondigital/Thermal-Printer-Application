@@ -9,7 +9,7 @@
   const post = (path,data) => api('/api/printer/'+path,JSON.stringify(data),{'Content-Type':'application/json'});
   function requestId() {return Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');}
   function render() {
-    const running = pending || !!(state && state.task && state.task.status==='running');
+    const running = appUpdating || pending || !!(state && state.task && state.task.status==='running');
     const connected = reachable && !!(state && state.connection.connected);
     const selected = config();
     $('quality-summary').textContent=`${{1:'Light',8:'Moderate',15:'Dark'}[selected.density]} density (${selected.density}) · ${selected.media===101?'loose A4 sheet':'folded A4 paper'} · settings saved when you connect or print.`;
